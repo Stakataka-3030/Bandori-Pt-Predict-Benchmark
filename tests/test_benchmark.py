@@ -413,6 +413,59 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(second["history_event_ids"], list(range(1, 10)))
         self.assertTrue(all("slot_time" not in p for p in first["history"]))
 
+    def test_walkforward_excludes_only_bad_event_horizon_panel(self):
+        data = copy.deepcopy(self.data)
+        event = data["events"][8]  # first target when warmup_events=8
+        bad_time = event["end_at"] - 24 * b.HOUR
+        points = event["tiers"]["1000"]["points"]
+        event["tiers"]["1000"]["points"] = [p for p in points if p["time"] != bad_time]
+
+        bundle = b.freeze_walkforward(data, 8)
+        protocol = bundle["protocol"]
+        self.assertEqual(protocol["target_case_count_before_eligibility"], 150)
+        self.assertEqual(protocol["eligible_case_count"], 147)
+        self.assertEqual(protocol["excluded_case_count"], 3)
+        self.assertEqual(protocol["fully_excluded_target_event_ids"], [])
+        self.assertEqual(protocol["eligible_target_event_ids"], protocol["target_event_ids"])
+        self.assertEqual(
+            protocol["excluded_cases_by_reason"],
+            {"incomplete multi-tier panel": 2, "insufficient or stale raw history": 1},
+        )
+
+        excluded = [x for x in bundle["exclusions"]
+                    if x.get("stage") == "hindcast" and x["event"] == 9]
+        self.assertEqual(len(excluded), 3)
+        self.assertTrue(all(x["horizon"] == 24 for x in excluded))
+        self.assertTrue(all(x["panel_failures"] == {"1000": "insufficient or stale raw history"}
+                            for x in excluded))
+
+        event9 = [t for t in bundle["tasks"] if t["event_id"] == 9]
+        self.assertEqual(len(event9), 12)
+        self.assertFalse(any(t["horizon_hours"] == 24 for t in event9))
+        self.assertEqual({t["tier"] for t in event9 if t["horizon_hours"] == 12},
+                         {100, 1000, 2000})
+
+        panels = {}
+        for task in bundle["tasks"]:
+            panels.setdefault((task["event_id"], task["horizon_hours"]), set()).add(task["tier"])
+        self.assertTrue(all(tiers == {100, 1000, 2000} for tiers in panels.values()))
+
+    def test_walkforward_reports_fully_excluded_target_event(self):
+        data = copy.deepcopy(self.data)
+        event = data["events"][8]
+        for tier in ("100", "1000", "2000"):
+            points = event["tiers"][tier]["points"]
+            event["tiers"][tier]["points"] = points[:2] + [points[-1]]
+
+        bundle = b.freeze_walkforward(data, 8)
+        protocol = bundle["protocol"]
+        self.assertEqual(protocol["target_case_count_before_eligibility"], 150)
+        self.assertEqual(protocol["eligible_case_count"], 135)
+        self.assertEqual(protocol["excluded_case_count"], 15)
+        self.assertEqual(protocol["fully_excluded_target_event_ids"], [9])
+        self.assertNotIn(9, protocol["eligible_target_event_ids"])
+        self.assertFalse(any(t["event_id"] == 9 for t in bundle["tasks"]))
+
     def test_raw_history_preserves_dense_observations(self):
         points = [{"time": m * b.HOUR // 60, "ep": m} for m in range(48 * 60 + 1)]
         raw = b.raw_history(points, 0, 48 * b.HOUR)

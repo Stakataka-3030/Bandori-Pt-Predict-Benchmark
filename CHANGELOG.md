@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4
+
+- Change protocol-v2 target eligibility from event-tier batch rejection to horizon-local complete multi-tier panels: a bad origin drops only that event × horizon panel, not every other horizon for the activity.
+- Preserve the full requested-tier sibling set required by multi-tier analog and CARE; if one tier is unavailable at an origin, sibling cases at that same origin are excluded with explicit panel-failure provenance.
+- Record candidate case count, eligible/excluded case counts, eligible target events, fully excluded target events, and exclusion reasons in the frozen protocol/manifest.
+- Extend `freeze-walkforward` CLI output with eligible target-event and excluded-case counts and add regression coverage for partial and fully excluded target events.
+
 ## 0.3.3
 
 - Add a deterministic, standard-library-only CN calendar provider for the State Council General Office holiday and makeup-workday schedules covering 2019–2026.
