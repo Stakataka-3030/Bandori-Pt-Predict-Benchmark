@@ -375,7 +375,7 @@ class BenchmarkTests(unittest.TestCase):
         archives = {"1": {"cutoff": [{}, {}, {}, {}, {}], "board": [[], [], [], [], []]}}
         detail = {"startAt": [str(start)], "endAt": [str(stop)],
                   "aggregateEndAt": [str(aggregate_end)], "eventType": "test"}
-        points = [{"time": start + h * b.HOUR, "ep": h * 100} for h in range(0, 169, 6)]
+        points = [{"time": start + h * b.HOUR, "ep": h * 100} for h in range(0, 168, 6)]
         def fake_get(client, url):
             if "events/all.3.json" in url:
                 return index
@@ -389,6 +389,17 @@ class BenchmarkTests(unittest.TestCase):
             data = b.load(Path(tmp) / "dataset.json")
             self.assertEqual(len(data["events"]), 1)
             self.assertEqual(data["events"][0]["tiers"], {})
+
+    def test_freeze_splits_only_complete_requested_tier_events(self):
+        data = copy.deepcopy(self.data)
+        del data["events"][0]["tiers"]["100"]
+        del data["events"][3]["tiers"]["2000"]
+        bundle = b.freeze(data, 8)
+        self.assertNotIn(1, bundle["protocol"]["calibration_event_ids"])
+        self.assertNotIn(4, bundle["protocol"]["calibration_event_ids"])
+        self.assertEqual(len(bundle["protocol"]["incomplete_events_excluded"]), 2)
+        for task in bundle["tasks"]:
+            self.assertIn(task["tier"], data["requested_tiers"])
 
     def test_version_markers_match(self):
         import tomllib

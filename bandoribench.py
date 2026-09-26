@@ -16,7 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 HOUR = 3_600_000
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
@@ -253,8 +253,22 @@ def freeze(data: dict, n_calibration: int = 10, horizons: tuple[int, ...] = (72,
     events = validate_dataset(data)
     if len({e["server"] for e in events}) != 1:
         raise ValueError("freeze one server per benchmark; compare servers in separate leaderboards")
+    requested_tiers = [int(t) for t in data.get("requested_tiers", [])]
+    if requested_tiers:
+        if len(set(requested_tiers)) != len(requested_tiers) or any(t not in TIERS for t in requested_tiers):
+            raise ValueError("dataset requested_tiers are invalid")
+        complete, incomplete = [], []
+        for e in events:
+            missing = [t for t in requested_tiers if str(t) not in e["tiers"]]
+            if missing:
+                incomplete.append({"event": e["event_id"], "missing_tiers": missing})
+            else:
+                complete.append(e)
+        events = complete
+    else:
+        incomplete = []
     if n_calibration < 3 or len(events) <= n_calibration:
-        raise ValueError("need >=3 calibration events and >=1 later test event")
+        raise ValueError("need >=3 calibration events and >=1 later complete test event")
     if not horizons or len(set(horizons)) != len(horizons) or any(h <= 0 for h in horizons):
         raise ValueError("horizons must be unique positive hours")
     if step_hours <= 0 or stale_hours < 0:
@@ -266,6 +280,8 @@ def freeze(data: dict, n_calibration: int = 10, horizons: tuple[int, ...] = (72,
                 "horizons": list(horizons), "step_hours": step_hours, "stale_hours": stale_hours,
                 "label_policy": "explicit_final_or_verified", "synthetic": bool(data.get("synthetic")),
                 "knowledge_time": data.get("knowledge_time", "observed_at_only"),
+                "requested_tiers": requested_tiers,
+                "incomplete_events_excluded": incomplete,
                 "calibration_event_ids": [e["event_id"] for e in calibration],
                 "test_event_ids": [e["event_id"] for e in test], "aggregation": "equal_era_tier_horizon_cells",
                 "score": "100/(1+macro_scaled_loss)", "dataset_sha256": digest(data)}
@@ -636,7 +652,8 @@ def collect(args: argparse.Namespace) -> None:
                 attempted += 1
                 audit.append({"event": eid, "error": str(exc)})
         data = {"schema": "bandoribench-dataset-v1", "synthetic": False,
-                "knowledge_time": "observed_at_only", "acquisition_audit": audit,
+                "knowledge_time": "observed_at_only", "requested_tiers": list(args.tiers),
+                "acquisition_audit": audit,
                 "events": sorted(events, key=lambda e: e["start_at"])}
         validate_dataset(data)
         save(out / "dataset.json", data)
@@ -662,7 +679,8 @@ def synthetic_dataset(count: int = 18) -> dict:
             e["tiers"][str(tier)] = {"points": points,
                 "label": {"ep": points[-1]["ep"], "time": e["end_at"], "quality": "synthetic", "evidence": "synthetic generator; not game data"}}
         events.append(e)
-    return {"schema": "bandoribench-dataset-v1", "synthetic": True, "knowledge_time": "synthetic", "events": events}
+    return {"schema": "bandoribench-dataset-v1", "synthetic": True, "knowledge_time": "synthetic",
+            "requested_tiers": [100, 1000, 2000], "events": events}
 
 
 def write_frozen(out: Path, bundle: dict) -> None:

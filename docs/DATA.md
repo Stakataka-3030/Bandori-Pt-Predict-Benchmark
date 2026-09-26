@@ -27,6 +27,7 @@
   "schema": "bandoribench-dataset-v1",
   "synthetic": false,
   "knowledge_time": "observed_at_only",
+  "requested_tiers": [100, 1000, 2000],
   "events": [
     {
       "server": "jp",
@@ -91,7 +92,7 @@
 
 ## 冻结与发布
 
-`private/benchmark.json` 给裁判使用，含测试真值；`public/tasks.json` 仅含任务前缀、早期校准活动、冻结尺度和 benchmark ID。`manifest.json` 列出参数及冻结前排除原因。bench ID 覆盖数据哈希、标签、任务、校准信息和软件版本；事后改包将校验失败。
+`private/benchmark.json` 给裁判使用，含测试真值；`public/tasks.json` 仅含任务前缀、早期校准活动、冻结尺度和 benchmark ID。`manifest.json` 列出参数及冻结前排除原因。采集器把目标档位写进 `requested_tiers`；冻结前先要求一场活动具备这些档位的全部可信终值，再进行时间顺序拆分，避免数据缺失活动占用校准名额。bench ID 覆盖数据哈希、标签、任务、校准信息和软件版本；事后改包将校验失败。
 
 公开聚合任务仍可被恶意使用者跨时点偷看，目录隔离不是系统安全边界。正式未知活动测试应由隔离执行器一次只投递一个 prefix，禁用未授权网络和其他文件访问，并封存 issued_at / available_at / 预测结果。当前版本没有实现这样的沙箱。
 

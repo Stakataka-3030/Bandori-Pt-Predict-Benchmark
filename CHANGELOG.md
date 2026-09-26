@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5
+
+- Freeze only chronologically sorted events with complete labels for every tier requested during collection; incomplete events no longer consume calibration/test slots.
+- Persist `requested_tiers` in real and synthetic datasets and record all pre-freeze incomplete-event exclusions in the protocol.
+- Fix the v0.1.4 regression test whose fixture accidentally placed its final tracker point exactly at `endAt`, which correctly qualified for the new post-end terminal rule.
+- Document the first real JP sample: 89/90 usable tracker series and 65 automatically labeled series across 30 recent events.
+
 ## 0.1.4
 
 - Add `post_end_final`: when archives are missing, stable tracker cutoff observation(s) between Bestdori `endAt` and `aggregateEndAt` may anchor the final cutoff.
