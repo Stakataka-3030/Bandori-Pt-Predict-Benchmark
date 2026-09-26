@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 HOUR = 3_600_000
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
@@ -106,10 +106,12 @@ def validate_calendar(calendar: dict | None, server: str) -> dict | None:
         except ValueError as exc:
             raise ValueError(f"invalid calendar date: {day}") from exc
         if isinstance(raw, str):
-            dtype, known_at = raw, None
+            dtype, known_at, previous_type, previous_known_at = raw, None, None, None
         elif isinstance(raw, dict):
             dtype = raw.get("type")
             known_at = raw.get("known_at")
+            previous_type = raw.get("previous_type")
+            previous_known_at = raw.get("previous_known_at")
         else:
             raise ValueError(f"invalid calendar entry for {day}")
         if dtype not in CALENDAR_DAY_TYPES:
@@ -117,10 +119,32 @@ def validate_calendar(calendar: dict | None, server: str) -> dict | None:
         entry = {"type": dtype}
         if known_at is not None:
             entry["known_at"] = integer(known_at, f"calendar {day} known_at")
+        if previous_type is not None:
+            if previous_type not in CALENDAR_DAY_TYPES or previous_type == dtype:
+                raise ValueError(f"invalid previous calendar day type for {day}")
+            if known_at is None or previous_known_at is None:
+                raise ValueError(f"calendar {day} previous_type requires known_at and previous_known_at")
+            previous_known = integer(previous_known_at, f"calendar {day} previous_known_at")
+            if previous_known >= entry["known_at"]:
+                raise ValueError(f"calendar {day} previous_known_at must predate known_at")
+            entry["previous_type"] = previous_type
+            entry["previous_known_at"] = previous_known
+        elif previous_known_at is not None:
+            raise ValueError(f"calendar {day} previous_known_at requires previous_type")
         normalized[day] = entry
-    return {"schema": "bandoribench-calendar-v1", "server": server,
-            "utc_offset_hours": float(offset), "days": dict(sorted(normalized.items()))}
-
+    result = {"schema": "bandoribench-calendar-v1", "server": server,
+              "utc_offset_hours": float(offset), "days": dict(sorted(normalized.items()))}
+    if "years" in calendar:
+        years = calendar["years"]
+        if (not isinstance(years, list) or any(isinstance(y, bool) or not isinstance(y, int) for y in years)
+                or years != sorted(set(years))):
+            raise ValueError("calendar years must be a sorted unique integer list")
+        result["years"] = years
+    if "provenance" in calendar:
+        if not isinstance(calendar["provenance"], dict):
+            raise ValueError("calendar provenance must be an object")
+        result["provenance"] = calendar["provenance"]
+    return result
 
 def _local_datetime(timestamp_ms: int, server: str, calendar: dict | None = None) -> datetime:
     offset = (calendar or {}).get("utc_offset_hours", SERVER_UTC_OFFSETS[server])
@@ -136,8 +160,11 @@ def _calendar_day_type(timestamp_ms: int, server: str, calendar: dict | None,
         known_at = entry.get("known_at")
         if known_at is None or known_at <= knowledge_at:
             return entry["type"]
+        if entry.get("previous_type") is not None:
+            previous_known_at = entry.get("previous_known_at")
+            if previous_known_at is None or previous_known_at <= knowledge_at:
+                return entry["previous_type"]
     return "weekend" if local.weekday() >= 5 else "weekday"
-
 
 def _calendar_window_fractions(task: dict, calendar: dict | None,
                                start: int, end: int, prefix: str) -> dict[str, float]:
@@ -1809,6 +1836,10 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--windows", help="explicit start/stop overrides JSON keyed server:event")
     c.add_argument("--settle-hours", type=int, default=24)
     c.add_argument("--delay", type=float, default=0.5)
+    cf = commands.add_parser("calendar-fetch", help="materialize a frozen public calendar snapshot")
+    cf.add_argument("--server", choices=("cn",), default="cn")
+    cf.add_argument("--years", type=int, nargs="+", required=True)
+    cf.add_argument("--out", required=True)
     f = commands.add_parser("freeze", help="legacy protocol-v1 fixed calibration/test pilot")
     f.add_argument("dataset")
     f.add_argument("--calibration-events", type=int, default=10)
@@ -1847,6 +1878,15 @@ def main(argv: list[str] | None = None) -> int:
             if args.recent <= 0 or args.delay < 0 or args.settle_hours < 0:
                 raise ValueError("invalid acquisition parameters")
             collect(args)
+        elif args.command == "calendar-fetch":
+            from calendar_provider.fetch import fetch_calendar
+            out = Path(args.out)
+            if out.exists():
+                raise ValueError("calendar output already exists; remove it explicitly before regenerating")
+            calendar = validate_calendar(fetch_calendar(args.server, args.years), args.server)
+            save(out, calendar)
+            print(json.dumps({"server": args.server, "years": calendar.get("years", []),
+                              "days": len(calendar["days"]), "sha256": digest(calendar)}))
         elif args.command == "freeze":
             bundle = freeze(load(args.dataset), args.calibration_events, tuple(args.horizons), args.step_hours, args.stale_hours)
             write_frozen(Path(args.out), bundle)
