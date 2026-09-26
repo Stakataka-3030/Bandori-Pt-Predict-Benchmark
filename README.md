@@ -1,6 +1,6 @@
 # Bandori PT Predict Benchmark
 
-**v0.3.5 · 新增外部模型 JSONL runner 接口、泄漏受控训练导出，以及 development / selection / final 三阶段评测。**
+**v0.3.6 · 修复 model-eval 的 `--` runner 分隔解析，文档中的 PowerShell/CLI 调用现可直接执行。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 

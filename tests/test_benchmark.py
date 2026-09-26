@@ -791,6 +791,26 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(len(report["temporal_checkpoints"]), 5)
         self.assertTrue(all(row["n_cases"] > 0 for row in report["temporal_checkpoints"]))
 
+    def test_model_eval_cli_separator_preserves_options_and_runner(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            benchmark_dir = Path(tmp) / "benchmark"
+            report_path = Path(tmp) / "report.json"
+            bundle = b.freeze_walkforward(self.data, 8)
+            b.write_frozen(benchmark_dir, bundle)
+            code = b.main([
+                "model-eval", str(benchmark_dir),
+                "--phase", "development",
+                "--track", "point",
+                "--bootstrap", "0",
+                "--out", str(report_path),
+                "--", sys.executable, str(root / "examples" / "persistence_model.py"),
+            ])
+            self.assertEqual(code, 0)
+            report = b.load(report_path)
+            self.assertEqual(report["model_id"], "example-persistence")
+            self.assertTrue(report["model_api"]["protocol_eligible"])
+
     def test_model_api_final_report_is_redacted(self):
         bundle = b.freeze_walkforward(self.data, 8)
         root = Path(__file__).resolve().parents[1]

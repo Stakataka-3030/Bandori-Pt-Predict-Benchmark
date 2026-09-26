@@ -118,3 +118,12 @@ The interface combines several safeguards:
 - the existing whole-event bootstrap and era/tier/horizon macro aggregation.
 
 A useful candidate should not merely maximize one development block. Prefer models whose performance is stable across development blocks, horizons, tiers, eras, and the selection phase before touching final.
+
+
+## CLI separator note
+
+v0.3.6 fixes the initial v0.3.5 parser bug where the runner remainder could swallow `model-eval` options after the benchmark path. Keep all BandoriBench options before the explicit `--`, then put the runner command after it:
+
+```powershell
+python bandoribench.py model-eval runs/cn-core-v1 --phase development --track point --out runs/report.json -- python my_model.py checkpoint.bin
+```
