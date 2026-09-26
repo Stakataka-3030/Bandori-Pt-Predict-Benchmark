@@ -1,6 +1,6 @@
 # Bandori PT Predict Benchmark
 
-**v0.3.6 · 修复 model-eval 的 `--` runner 分隔解析，文档中的 PowerShell/CLI 调用现可直接执行。**
+**v0.3.7 · 新增可分发的 development-only devkit，并收紧 selection/final 的竞赛防过拟合输出。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
@@ -126,6 +126,14 @@ python bandoribench.py model-eval runs/cn-core-v1 --phase development --track po
 ```
 
 Python runner 可直接使用 `bandoribench_model.serve()`；仓库的 `examples/persistence_model.py` 是最小可运行示例。
+
+多进程竞赛不要把正式 `runs/.../public/tasks.json` 分发给 worker：protocol-v2 的该文件为了兼容可信 replay 会包含带历史标签的 `reference_events`，其因果边界依赖 `history_event_ids` 逻辑约束，并不是物理隔离的竞赛输入。应由中央裁判生成 development-only devkit：
+
+```bash
+python bandoribench.py model-export-devkit runs/cn-core-v1 --out shared/cn-core-development
+```
+
+worker 可以拿整个 devkit 自由开发和自评；selection/final benchmark 只留在中央裁判。
 
 ## 防止漂亮但无效的成绩
 

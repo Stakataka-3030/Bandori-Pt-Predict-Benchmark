@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7
+
+- Add `model-export-devkit`, producing a self-contained development-only frozen benchmark that contains warm-up + development events/truth but physically excludes selection/final events and labels.
+- Make devkits evaluate their entire exposed target range as development, so workers can iterate locally without access to the central benchmark.
+- Mark `n_events_scored` explicitly in reports to distinguish effective event sample size from correlated tier × horizon case count.
+- Redact selection diagnostics to aggregate score/coverage/bootstrap-level output, matching the final holdout's anti-overfit posture.
+- Document that protocol-v2 `public/tasks.json` is a trusted replay artifact, not a competition-safe package, because its shared `reference_events` retain labels and rely on logical `history_event_ids` filtering.
+
 ## 0.3.6
 
 - Fix `model-eval` CLI parsing: split the runner command at the explicit `--` before argparse processes benchmark options, so `--phase`, `--track`, `--out`, and `--submission-out` are no longer swallowed by the runner positional.
