@@ -536,6 +536,55 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(b._calendar_day_type(timestamp, "jp", calendar, timestamp), fallback)
         self.assertEqual(b._calendar_day_type(timestamp, "jp", calendar, timestamp + 2 * b.HOUR), "holiday")
 
+    def test_cn_calendar_provider_has_official_adjustments(self):
+        from calendar_provider.china import build_china_calendar
+        calendar = build_china_calendar([2019, 2020, 2024, 2026])
+        self.assertEqual(calendar["days"]["2019-05-02"]["type"], "holiday")
+        self.assertEqual(calendar["days"]["2019-04-28"]["type"], "makeup_workday")
+        self.assertEqual(calendar["days"]["2024-02-04"]["type"], "makeup_workday")
+        self.assertEqual(calendar["days"]["2026-02-23"]["type"], "holiday")
+        revised = calendar["days"]["2020-02-01"]
+        self.assertEqual(revised["type"], "holiday")
+        self.assertEqual(revised["previous_type"], "makeup_workday")
+        self.assertLess(revised["previous_known_at"], revised["known_at"])
+        with self.assertRaises(ValueError):
+            build_china_calendar([2018])
+
+    def test_calendar_revision_preserves_preannouncement_state(self):
+        from calendar_provider.china import build_china_calendar
+        calendar = b.validate_calendar(build_china_calendar([2020]), "cn")
+        revised = calendar["days"]["2020-02-01"]
+        future_day = revised["known_at"] + 4 * 24 * b.HOUR
+        self.assertEqual(
+            b._calendar_day_type(future_day, "cn", calendar, revised["previous_known_at"] - 1),
+            "weekend",
+        )
+        self.assertEqual(
+            b._calendar_day_type(future_day, "cn", calendar, revised["previous_known_at"]),
+            "makeup_workday",
+        )
+        self.assertEqual(
+            b._calendar_day_type(future_day, "cn", calendar, revised["known_at"]),
+            "holiday",
+        )
+
+    def test_calendar_fetch_cli_and_committed_snapshot(self):
+        from calendar_provider.china import build_china_calendar
+        root = Path(__file__).resolve().parents[1]
+        expected = build_china_calendar(range(2019, 2027))
+        self.assertEqual(expected["days"]["2022-12-31"]["type"], "holiday")
+        self.assertEqual(b.load(root / "calendars" / "cn-2019-2026.json"), expected)
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "cn.json"
+            self.assertEqual(
+                b.main(["calendar-fetch", "--server", "cn", "--years", "2024", "2025",
+                        "--out", str(out)]),
+                0,
+            )
+            generated = b.load(out)
+            self.assertEqual(generated["years"], [2024, 2025])
+            self.assertEqual(generated["days"]["2025-10-11"]["type"], "makeup_workday")
+
     def test_care_s_is_full_coverage_and_probabilistic(self):
         bundle = b.freeze_walkforward(self.data, 8)
         submission = b.predict(b.public_bundle(bundle), "care-s")

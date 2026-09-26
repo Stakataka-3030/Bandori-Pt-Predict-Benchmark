@@ -1,6 +1,6 @@
 # Bandori PT Predict Benchmark
 
-**v0.3.2 · 新增 causal-stack：只用此前 OOS 表现融合 multi-tier analog 与 Bestdori，并因果校准 ensemble spread。**
+**v0.3.3 · 固化 CN 2019–2026 官方节假日/调休日历，加入 calendar-fetch 与公告时点因果语义。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
@@ -54,8 +54,11 @@ python bandoribench.py collect --server jp --source bestdori --recent 80 --tiers
 # 正式 v2：完整活动中前 12 场 warm-up，后续逐场 walk-forward，输入保留原始采样
 python bandoribench.py freeze-walkforward data/jp-80/dataset.json --warmup-events 12 --out runs/jp-v1
 
-# 若要显式评测节假日/调休日，把公开日历一起冻结进新的 benchmark
-python bandoribench.py freeze-walkforward data/cn-80/dataset.json --warmup-events 12 --tiers 500 1000 2000 --calendar calendars/cn.json --out runs/cn-core-v1
+# 从仓库内置的国务院办公厅公告规则可重复生成 CN 2019-2026 冻结日历
+python bandoribench.py calendar-fetch --server cn --years 2019 2020 2021 2022 2023 2024 2025 2026 --out calendars/cn-2019-2026.json
+
+# 显式评测节假日/调休日：把固定日历一起冻结进新的 benchmark
+python bandoribench.py freeze-walkforward data/cn-80/dataset.json --warmup-events 12 --tiers 500 1000 2000 --calendar calendars/cn-2019-2026.json --out runs/cn-core-v1
 
 # 基线
 python bandoribench.py predict runs/jp-v1/public/tasks.json --model calibrated-linear24 --out runs/jp-calibrated-linear24.json
@@ -102,7 +105,7 @@ python bandoribench.py collect --server cn --source hhwx --recent 30 --tiers 500
 
 HHWX 的两条投影按其公开源码窗口和线性外推公式重放，因此在相同 raw prefix 下可复现；HHWX 页面另有的 “Bestdori prediction” 属于 Bestdori 公式家族，不重复列为独立模型。`rinko-dpra-replay` 来自公开保留下来的旧 Rinko 算法代码。茨菇第一预测线依赖 Bestdori `rates.json` 的历史状态，而旧 rate 快照未被可靠归档，因此暂不把“今天用当前 rate 重算过去”冒充历史平台预测；MYCX 的 JP/CN 适配留到后续模型阶段。
 
-CARE-S / CARE-S2 与 causal-stack 的实现与训练边界见 [docs/CARE.md](docs/CARE.md)。`freeze-walkforward --tiers ...` 可以从一个采集了更多档位的数据集冻结公共子面板；这对 CN 很重要，因为 T1500 历史覆盖远少于 T500/T1000/T2000。显式日历使用 `bandoribench-calendar-v1`；字符串日期项表示在整个覆盖期都已公开，带 `known_at` 的项只有在起报时间不早于该时间时才可见，防止后来公布的调休安排回灌到更早 hindcast。
+CARE-S / CARE-S2 与 causal-stack 的实现与训练边界见 [docs/CARE.md](docs/CARE.md)。`freeze-walkforward --tiers ...` 可以从一个采集了更多档位的数据集冻结公共子面板；这对 CN 很重要，因为 T1500 历史覆盖远少于 T500/T1000/T2000。显式日历使用 `bandoribench-calendar-v1`。CN 2019–2026 快照由仓库内置的国务院办公厅公告规则离线生成；`known_at` 控制公告可见时间，修订项再用 `previous_type` + `previous_known_at` 表示修订前已知安排，避免任何一层公告回灌到更早 hindcast。实现、来源和当前进度见 [Calendar provider](docs/CALENDAR_PROVIDER.md) 与 [Calendar progress](docs/CALENDAR_PROGRESS.md)。
 
 外部算法只需读取 `public/tasks.json` 并按 [提交协议](docs/SCORING.md) 写出 JSON，然后使用同一个 `score` 命令。不限定 Python、神经网络或统计模型。
 

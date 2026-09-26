@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3
+
+- Add a deterministic, standard-library-only CN calendar provider for the State Council General Office holiday and makeup-workday schedules covering 2019–2026.
+- Add `calendar-fetch` and commit `calendars/cn-2019-2026.json` for reproducible CN benchmark freezing; prediction and scoring remain offline.
+- Preserve causal announcement timing with `known_at`; revisions carry both `previous_type` and `previous_known_at` so neither revised schedules nor the earlier schedules they replaced leak into older hindcasts.
+- Encode the later 2019 Labor Day adjustment and the nationwide 2020 Spring Festival extension, plus cross-year official holiday classification such as 2022-12-31 in the 2023 New Year break.
+- Package `calendar_provider`, add CLI/snapshot/revision regression tests, and document authoritative provenance and the CN-Core freeze workflow.
+
 ## 0.3.2
 
 - Add `causal-stack`, a protocol-v2 ensemble that combines the multi-tier analog point forecast with hierarchical Bestdori using an L1-optimal blend weight learned only from earlier completed hindcasts.
