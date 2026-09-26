@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.8
+
+- Make reward-era composition explicit in every model-evaluation phase via target and initial-training era counts.
+- Detect when chronological final contains eras unseen in all pre-final training/selection events and label it `regime_shift_challenge` (or a mixed/same-regime variant).
+- For one-shot final evaluation, add aggregate regime-shift diagnostics: first unseen-regime event (zero-shot), later post-adaptation events, and overall regime-shift score.
+- Keep regime-shift classification and full phase-era composition judge-side; runners learn only the current event's ordinary task metadata, avoiding future-phase metadata leakage.
+- Keep selection/final case-, tier-, horizon-, and era-level losses redacted; the new regime diagnostics are aggregate event-level summaries intended only for the central final report.
+
 ## 0.3.7
 
 - Add `model-export-devkit`, producing a self-contained development-only frozen benchmark that contains warm-up + development events/truth but physically excludes selection/final events and labels.

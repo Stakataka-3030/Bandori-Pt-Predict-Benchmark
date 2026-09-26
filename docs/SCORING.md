@@ -94,3 +94,10 @@ Coverage 不硬塞进主分，以免破坏 WIS 的 proper-scoring 结构。Pilot
 For multi-worker model competitions, use a development-only devkit rather than distributing protocol-v2 `public/tasks.json`. The latter contains shared labeled `reference_events` for trusted replay and therefore is not a physically isolated contestant artifact.
 
 Report both case count and event count. Tier/horizon cases from one event are correlated; model-selection strength is governed much more by the number of held-out events than by the raw number of cases. Selection/final outputs are aggregate by default.
+
+
+## Reward-regime shift interpretation
+
+The `era` field is a scoring/reporting stratum and a known model feature, not hidden truth. For CN, the benchmark distinguishes the legacy `voice1000` reward regime from the later `voice500_1500` regime using actual event chronology plus explicit corrections.
+
+A chronological final phase whose era is absent from every pre-final training/selection event is labeled `regime_shift_challenge`. Its one-shot central report may expose three aggregate scores: the first unseen-regime event (zero-shot), the later post-adaptation events, and the overall final score. These diagnostics must not be used for repeated model tuning.

@@ -1,6 +1,6 @@
 # Bandori PT Predict Benchmark
 
-**v0.3.7 · 新增可分发的 development-only devkit，并收紧 selection/final 的竞赛防过拟合输出。**
+**v0.3.8 · 将 CN 奖励制度切换提升为显式 regime-shift 评测语义，并拆分 final 的 zero-shot / adaptation 指标。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
@@ -134,6 +134,8 @@ python bandoribench.py model-export-devkit runs/cn-core-v1 --out shared/cn-core-
 ```
 
 worker 可以拿整个 devkit 自由开发和自评；selection/final benchmark 只留在中央裁判。
+
+当前 CN-Core 的制度标签由事件实际时间和显式纠正规则产生：旧制度为 `voice1000`，新制度为 `voice500_1500`。若 chronological final 的 era 在此前训练/selection 中完全未出现，`model-plan` 会把 final 明确标记为 `regime_shift_challenge`，而不是普通 IID/tail test。正式 final 一次性报告会同时给出首个新制度活动的 zero-shot score、后续已观察新制度真值后的 post-adaptation score，以及 overall regime-shift score。
 
 ## 防止漂亮但无效的成绩
 

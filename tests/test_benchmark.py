@@ -791,6 +791,45 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(len(report["temporal_checkpoints"]), 5)
         self.assertTrue(all(row["n_cases"] > 0 for row in report["temporal_checkpoints"]))
 
+    def test_model_plan_marks_unseen_final_era_as_regime_shift(self):
+        data = copy.deepcopy(self.data)
+        for event in data["events"]:
+            event["era"] = "legacy"
+        # warmup=8 -> target events 9..18 -> dev 9..14, selection 15..16, final 17..18.
+        data["events"][16]["era"] = "new-regime"
+        data["events"][17]["era"] = "new-regime"
+        bundle = b.freeze_walkforward(data, 8)
+        plan = b.model_evaluation_plan(bundle)
+        self.assertEqual(plan["phases"]["development"]["target_era_counts"], {"legacy": 6})
+        self.assertEqual(plan["phases"]["selection"]["target_era_counts"], {"legacy": 2})
+        self.assertEqual(plan["phases"]["final"]["target_era_counts"], {"new-regime": 2})
+        self.assertEqual(plan["regime_shift"]["final_role"], "regime_shift_challenge")
+        self.assertEqual(plan["regime_shift"]["source_era_counts"], {"legacy": 16})
+        self.assertEqual(plan["regime_shift"]["target_era_counts"], {"new-regime": 2})
+        self.assertEqual(plan["regime_shift"]["unseen_target_eras"], ["new-regime"])
+        self.assertEqual(plan["regime_shift"]["first_unseen_regime_event_id"], 17)
+
+    def test_final_regime_shift_report_separates_zero_shot_and_adaptation(self):
+        data = copy.deepcopy(self.data)
+        for event in data["events"]:
+            event["era"] = "legacy"
+        data["events"][16]["era"] = "new-regime"
+        data["events"][17]["era"] = "new-regime"
+        bundle = b.freeze_walkforward(data, 8)
+        root = Path(__file__).resolve().parents[1]
+        runner = [sys.executable, str(root / "examples" / "persistence_model.py")]
+        _, report = b.run_model_api(bundle, runner, phase="final", track="point", bootstrap=0)
+        diag = report["regime_shift_diagnostics"]
+        self.assertEqual(report["evaluation_role"], "regime_shift_challenge")
+        self.assertEqual(diag["role"], "regime_shift_challenge")
+        self.assertEqual(diag["first_new_regime_event_id"], 17)
+        self.assertEqual(diag["post_adaptation_event_ids"], [18])
+        self.assertIsNotNone(diag["first_new_regime_event_score"])
+        self.assertIsNotNone(diag["post_adaptation_score"])
+        self.assertEqual(diag["overall_regime_shift_score"], report["score"])
+        self.assertNotIn("case_losses", report)
+        self.assertNotIn("by_era", report)
+
     def test_model_development_bundle_excludes_selection_and_final(self):
         bundle = b.freeze_walkforward(self.data, 8)
         full_plan = b.model_evaluation_plan(bundle)
@@ -859,6 +898,8 @@ class BenchmarkTests(unittest.TestCase):
         _, report = b.run_model_api(bundle, runner, phase="final", track="point", bootstrap=0)
         self.assertTrue(report["eligible"])
         self.assertTrue(report["final_holdout"])
+        self.assertEqual(report["evaluation_role"], "same_regime_tail_holdout")
+        self.assertNotIn("regime_shift_diagnostics", report)
         self.assertNotIn("case_losses", report)
         self.assertNotIn("by_tier", report)
         self.assertEqual(report["temporal_checkpoints"], [])
