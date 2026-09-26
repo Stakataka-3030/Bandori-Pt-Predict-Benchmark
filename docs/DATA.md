@@ -8,7 +8,7 @@
 - Bestdori 活动归档最终档线：`https://bestdori.com/api/archives/all.5.json`，每场的 `cutoff[server][tier]`
 - HHWX 档线：`https://hhwx.org/api/bandori/tracker/data?server={0|1|2|3}&event={event_id}&type=event&tier={tier}`
 
-服务器依次为 JP/EN/TW/CN。以上接口取自公开实现，不是游戏官方 API 承诺。用户侧首次真实采集已确认 Bestdori 请求可达，并暴露、修复了 v0.1.1 的时间字段错误；仍不能据此宣称已实测全历史覆盖或数据频率。
+服务器依次为 JP/EN/TW/CN。以上接口取自公开实现，不是游戏官方 API 承诺。2026-09-26 的 JP 80 场候选池实测：54 场 T100/T1000/T2000 三档完整，237/240 条 tracker 序列通过单调性校验；正常序列中位采样间隔约 0.5006 小时。168 条自动终值都来自实际 post-end tracker observation，而不是插值或外推。
 
 已查阅的公开契约：
 
@@ -88,11 +88,11 @@
 
 原始成功响应按内容 SHA-256 存储，`acquisition.json` 保存 URL、取得时间、错误和各序列间隔统计。没有自动跨站兜底，以免混淆来源。因数据缺失的活动不能被预测得更容易的旧活动无痕替换；缺失及采集失败要随 release 审计公开。活动索引本身缺少时间的条目仍须在发布前另行盘点，此工具不声称能发现上游完全未列出的活动。
 
-请求成功但空数组不是零分。六小时采样通过因果 as-of 实现，不插值、不补充开局 0 分。严格截止到已知数据；`available_at` 存在时用它过滤。没有时就保持 `observed_at_only` 标签，取得时间 `retrieved_at` 不伪装成历史可用时间。
+请求成功但空数组不是零分。正式 protocol-v2 直接保留 `issued_at` 前所有实际 tracker observation，不插值、不补开局 0 分，也不强制六小时重采样；旧 protocol-v1 仍保留六小时因果 as-of 以复现 Pilot。`available_at` 存在时必须同时满足可用时间；没有时保持 `observed_at_only`。
 
 ## 冻结与发布
 
-`private/benchmark.json` 给裁判使用，含测试真值；`public/tasks.json` 仅含任务前缀、早期校准活动、冻结尺度和 benchmark ID。`manifest.json` 列出参数及冻结前排除原因。采集器把目标档位写进 `requested_tiers`；冻结前先要求一场活动具备这些档位的全部可信终值，再进行时间顺序拆分，避免数据缺失活动占用校准名额。bench ID 覆盖数据哈希、标签、任务、校准信息和软件版本；事后改包将校验失败。
+`private/benchmark.json` 含评分真值；`public/tasks.json` 在 protocol-v2 中包含 raw-prefix tasks、固定 warm-up scales 和一份去重的 `reference_events`。每题的 `history_event_ids` 明确列出该 hindcast 可以使用的既往活动；内置模型严格遵守。项目不做对抗性沙箱。`manifest.json` 列出参数及冻结前排除原因。bench ID 覆盖数据哈希、标签、任务、协议和软件版本；事后改包将校验失败。
 
 公开聚合任务仍可被恶意使用者跨时点偷看，目录隔离不是系统安全边界。正式未知活动测试应由隔离执行器一次只投递一个 prefix，禁用未授权网络和其他文件访问，并封存 issued_at / available_at / 预测结果。当前版本没有实现这样的沙箱。
 

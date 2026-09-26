@@ -401,6 +401,55 @@ class BenchmarkTests(unittest.TestCase):
         for task in bundle["tasks"]:
             self.assertIn(task["tier"], data["requested_tiers"])
 
+
+    def test_walkforward_raw_protocol_and_causal_history_ids(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        self.assertEqual(bundle["protocol"]["schema"], "bandoribench-protocol-v2")
+        self.assertEqual(bundle["protocol"]["mode"], "expanding_walk_forward_raw")
+        self.assertEqual(len(bundle["tasks"]), 150)
+        first = next(t for t in bundle["tasks"] if t["event_id"] == 9)
+        second = next(t for t in bundle["tasks"] if t["event_id"] == 10)
+        self.assertEqual(first["history_event_ids"], list(range(1, 9)))
+        self.assertEqual(second["history_event_ids"], list(range(1, 10)))
+        self.assertTrue(all("slot_time" not in p for p in first["history"]))
+
+    def test_raw_history_preserves_dense_observations(self):
+        points = [{"time": m * b.HOUR // 60, "ep": m} for m in range(48 * 60 + 1)]
+        raw = b.raw_history(points, 0, 48 * b.HOUR)
+        coarse = b.coarse_history(points, 0, 48 * b.HOUR)
+        self.assertEqual(len(raw), 48 * 60 + 1)
+        self.assertEqual(len(coarse), 9)
+
+    def test_walkforward_baselines_are_full_coverage(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        public = b.public_bundle(bundle)
+        for model in ("persistence", "linear24", "calibrated-linear24",
+                      "linear24-quantiles", "bestdori-hierarchical"):
+            submission = b.predict(public, model)
+            track = "probabilistic" if model == "linear24-quantiles" else "point"
+            report = b.evaluate(bundle, submission, track, bootstrap=0)
+            self.assertTrue(report["eligible"], (model, report["failures"][:3]))
+            self.assertEqual(report["coverage"], 1.0)
+
+    def test_walkforward_future_reference_label_does_not_change_earlier_baseline(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        public = b.public_bundle(bundle)
+        target = next(t for t in bundle["tasks"] if t["event_id"] == 9 and t["tier"] == 1000 and t["horizon_hours"] == 24)
+        before = {p["case_id"]: p for p in b.predict(public, "calibrated-linear24")["predictions"]}[target["case_id"]]
+        changed = copy.deepcopy(public)
+        future = next(e for e in changed["reference_events"] if e["event_id"] == 18)
+        future["tiers"]["1000"]["label"]["ep"] += 999_999_999
+        after = {p["case_id"]: p for p in b.predict(changed, "calibrated-linear24")["predictions"]}[target["case_id"]]
+        self.assertEqual(before, after)
+
+    def test_probability_report_has_calibration_diagnostics(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        submission = b.predict(b.public_bundle(bundle), "linear24-quantiles")
+        report = b.evaluate(bundle, submission, "probabilistic", bootstrap=0)
+        for key in ("coverage50", "coverage90", "mean_interval_width50",
+                    "mean_interval_width90", "median_bias"):
+            self.assertIn(key, report)
+
     def test_version_markers_match(self):
         import tomllib
         root = Path(__file__).resolve().parents[1]

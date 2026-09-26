@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bandori-pt-predict-benchmark"
-version = "0.1.5"
-description = "Causal coarse-window benchmark for Bandori event cutoff forecasts"
+version = "0.2.0"
+description = "Causal walk-forward benchmark for Bandori event cutoff forecasts"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []

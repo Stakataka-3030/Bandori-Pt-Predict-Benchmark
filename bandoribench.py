@@ -16,7 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.1.5"
+VERSION = "0.2.0"
 HOUR = 3_600_000
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
@@ -199,6 +199,39 @@ def make_task(e: dict, tier: str, horizon: int, protocol: dict) -> dict:
             "input_cutoff_at": history[-1]["time"], "history": history}
 
 
+
+def raw_history(points: list[dict], start: int, issue: int) -> list[dict]:
+    """Return every causally visible tracker observation; never interpolate/resample."""
+    if issue < start:
+        raise ValueError("invalid raw history window")
+    out = []
+    for p in points:
+        available = p.get("available_at", p["time"])
+        if start <= p["time"] <= issue and not p.get("isFinal") and available <= issue:
+            row = {"time": p["time"], "ep": p["ep"]}
+            if "available_at" in p:
+                row["available_at"] = p["available_at"]
+            out.append(row)
+    return out
+
+
+def make_raw_task(e: dict, tier: str, horizon: int, protocol: dict) -> dict:
+    issue = e["end_at"] - horizon * HOUR
+    if issue - e["start_at"] < 24 * HOUR:
+        raise ValueError("less than 24 hours of event history")
+    history = raw_history(e["tiers"][tier]["points"], e["start_at"], issue)
+    stale_hours = protocol["stale_hours"]
+    if len(history) < 3 or issue - history[-1]["time"] > stale_hours * HOUR:
+        raise ValueError("insufficient or stale raw history")
+    if history[-1]["time"] - history[0]["time"] < 18 * HOUR:
+        raise ValueError("insufficient observation span")
+    metadata = {k: e[k] for k in ("server", "event_id", "start_at", "end_at", "event_type", "era")}
+    return {**metadata, "case_id": f'{e["server"]}:{e["event_id"]}:{tier}:{horizon}',
+            "tier": int(tier), "horizon_hours": horizon, "issued_at": issue,
+            "input_cutoff_at": history[-1]["time"], "input_sampling": "raw_tracker_observations",
+            "history": history}
+
+
 def linear24(task: dict) -> float:
     history = task["history"]
     last = history[-1]
@@ -334,6 +367,103 @@ def freeze(data: dict, n_calibration: int = 10, horizons: tuple[int, ...] = (72,
     return body
 
 
+
+def freeze_walkforward(data: dict, warmup_events: int = 12,
+                       horizons: tuple[int, ...] = (72, 48, 24, 12, 6),
+                       stale_hours: int = 3) -> dict:
+    """Protocol v2: raw tracker prefixes with expanding historical context."""
+    events = validate_dataset(data)
+    if len({e["server"] for e in events}) != 1:
+        raise ValueError("freeze one server per benchmark; compare servers separately")
+    requested_tiers = [int(t) for t in data.get("requested_tiers", [])]
+    if not requested_tiers or len(set(requested_tiers)) != len(requested_tiers) or any(t not in TIERS for t in requested_tiers):
+        raise ValueError("walk-forward datasets require valid requested_tiers")
+    complete, incomplete = [], []
+    for e in events:
+        missing = [t for t in requested_tiers if str(t) not in e["tiers"]]
+        if missing:
+            incomplete.append({"event": e["event_id"], "missing_tiers": missing})
+        else:
+            complete.append(e)
+    events = complete
+    if warmup_events < 3 or len(events) <= warmup_events:
+        raise ValueError("need >=3 warm-up events and >=1 later complete hindcast event")
+    if not horizons or len(set(horizons)) != len(horizons) or any(h <= 0 for h in horizons):
+        raise ValueError("horizons must be unique positive hours")
+    if stale_hours < 0:
+        raise ValueError("invalid stale-hours")
+    warmup, targets = events[:warmup_events], events[warmup_events:]
+    if max(e["end_at"] for e in warmup) >= min(e["start_at"] for e in targets):
+        raise ValueError("warm-up overlaps hindcast period")
+    protocol = {
+        "schema": "bandoribench-protocol-v2",
+        "mode": "expanding_walk_forward_raw",
+        "software_version": VERSION,
+        "horizons": list(horizons),
+        "stale_hours": stale_hours,
+        "synthetic": bool(data.get("synthetic")),
+        "knowledge_time": data.get("knowledge_time", "observed_at_only"),
+        "requested_tiers": requested_tiers,
+        "incomplete_events_excluded": incomplete,
+        "warmup_event_ids": [e["event_id"] for e in warmup],
+        "target_event_ids": [e["event_id"] for e in targets],
+        "aggregation": "equal_era_tier_horizon_cells",
+        "score": "100/(1+macro_scaled_loss)",
+        "scale_policy": "warmup_linear24_fixed",
+        "input_policy": "all raw tracker observations visible by issued_at",
+        "history_policy": "models may fit only events listed in history_event_ids",
+        "dataset_sha256": digest(data),
+    }
+    errors, finals = defaultdict(list), defaultdict(list)
+    exclusions, tasks, truth = [], [], {}
+    for e in warmup:
+        for tier in map(str, requested_tiers):
+            series = e["tiers"][tier]
+            for h in horizons:
+                try:
+                    task = make_raw_task(e, tier, h, protocol)
+                except ValueError as exc:
+                    exclusions.append({"stage": "warmup_scale", "event": e["event_id"],
+                                       "tier": tier, "horizon": h, "reason": str(exc)})
+                    continue
+                key = scale_key(task)
+                errors[key].append(abs(linear24(task) - series["label"]["ep"]))
+                finals[key].append(series["label"]["ep"])
+    scales = {k: max(st.mean(v), st.median(finals[k]) * 0.01, 1.0)
+              for k, v in errors.items() if len(v) >= 3}
+    for i, e in enumerate(events[warmup_events:], start=warmup_events):
+        allowed = [past["event_id"] for past in events[:i]]
+        for tier in map(str, requested_tiers):
+            series, batch = e["tiers"][tier], []
+            try:
+                for h in horizons:
+                    task = make_raw_task(e, tier, h, protocol)
+                    if scale_key(task) not in scales:
+                        raise ValueError(f"fewer than 3 warm-up scale cases for {scale_key(task)}")
+                    task["history_event_ids"] = allowed
+                    batch.append(task)
+            except ValueError as exc:
+                exclusions.append({"stage": "hindcast", "event": e["event_id"],
+                                   "tier": tier, "reason": str(exc)})
+                continue
+            for task in batch:
+                tasks.append(task)
+                truth[task["case_id"]] = series["label"]
+    if not tasks:
+        raise ValueError("no eligible walk-forward cases")
+    body = {
+        "protocol": protocol,
+        "scales": scales,
+        "tasks": tasks,
+        "truth": truth,
+        # Kept once for compactness. history_event_ids is the causal contract for each task.
+        "reference_events": events,
+        "exclusions": exclusions,
+    }
+    body["benchmark_id"] = digest(body)
+    return body
+
+
 def verify_bundle(bundle: dict) -> None:
     body = {k: v for k, v in bundle.items() if k != "benchmark_id"}
     if digest(body) != bundle.get("benchmark_id"):
@@ -341,13 +471,68 @@ def verify_bundle(bundle: dict) -> None:
 
 
 def public_bundle(bundle: dict) -> dict:
-    """No test truth or original full test event is included."""
-    return {k: bundle[k] for k in ("benchmark_id", "protocol", "tasks", "calibration", "scales")}
+    """Public replay inputs. This is a trusted offline protocol, not an anti-cheat sandbox."""
+    keys = ["benchmark_id", "protocol", "tasks", "scales"]
+    if bundle["protocol"]["schema"] == "bandoribench-protocol-v1":
+        keys.append("calibration")
+    else:
+        keys.append("reference_events")
+    return {k: bundle[k] for k in keys}
+
+
+def _walkforward_events(public: dict, task: dict) -> list[dict]:
+    allowed = set(task.get("history_event_ids", []))
+    return [e for e in public["reference_events"] if e["event_id"] in allowed]
+
+
+def _walkforward_residuals(public: dict, task: dict) -> list[float]:
+    residuals = []
+    protocol, tier, horizon = public["protocol"], str(task["tier"]), task["horizon_hours"]
+    for e in _walkforward_events(public, task):
+        if tier not in e["tiers"]:
+            continue
+        try:
+            hist_task = make_raw_task(e, tier, horizon, protocol)
+        except ValueError:
+            continue
+        residuals.append(e["tiers"][tier]["label"]["ep"] - linear24(hist_task))
+    return residuals
+
+
+def _walkforward_bestdori_rate(public: dict, task: dict, shrink_k: float = 3.0) -> float:
+    tier = str(task["tier"])
+    global_rates, type_rates = [], []
+    for e in _walkforward_events(public, task):
+        if tier not in e["tiers"]:
+            continue
+        try:
+            t = make_raw_task(e, tier, 24, public["protocol"])
+            eligible = [p for p in t["history"] if p["time"] >= e["start_at"] + 12 * HOUR]
+            a, b = regression(eligible, e["start_at"], e["end_at"])
+            if b <= 0:
+                continue
+            rate = (e["tiers"][tier]["label"]["ep"] - a - b) / b
+        except ValueError:
+            continue
+        global_rates.append(rate)
+        if e["event_type"] == task["event_type"]:
+            type_rates.append(rate)
+    if len(global_rates) < 3:
+        raise ValueError("fewer than 3 historical rates for this tier")
+    global_rate = st.median(global_rates)
+    if not type_rates:
+        return global_rate
+    type_rate = st.median(type_rates)
+    w = len(type_rates) / (len(type_rates) + shrink_k)
+    return w * type_rate + (1 - w) * global_rate
 
 
 def predict(public: dict, model: str = "linear24") -> dict:
-    if model not in ("linear24", "persistence", "linear24-quantiles", "bestdori-recalibrated"):
+    models = ("linear24", "persistence", "calibrated-linear24", "linear24-quantiles",
+              "bestdori-recalibrated", "bestdori-hierarchical")
+    if model not in models:
         raise ValueError("unknown baseline")
+    v2 = public["protocol"]["schema"] == "bandoribench-protocol-v2"
     predictions = []
     for task in public["tasks"]:
         row = {"case_id": task["case_id"]}
@@ -355,21 +540,35 @@ def predict(public: dict, model: str = "linear24") -> dict:
             value = linear24(task)
             if model == "persistence":
                 value = task["history"][-1]["ep"]
+            elif model == "calibrated-linear24":
+                residuals = _walkforward_residuals(public, task) if v2 else public["calibration"]["residuals"][scale_key(task)]
+                if len(residuals) < 3:
+                    raise ValueError("fewer than 3 historical residuals")
+                value += st.median(residuals)
             elif model == "bestdori-recalibrated":
+                if v2:
+                    raise ValueError("legacy fixed-calibration Bestdori baseline is protocol-v1 only")
                 rate = public["calibration"]["rates"].get(rate_key(task))
                 if rate is None:
                     raise ValueError("no >=3-event calibration rate for this type/tier")
                 value = bestdori_recalibrated(task, rate)
+            elif model == "bestdori-hierarchical":
+                if not v2:
+                    raise ValueError("hierarchical Bestdori baseline requires protocol-v2")
+                value = bestdori_recalibrated(task, _walkforward_bestdori_rate(public, task))
             row["prediction"] = value
             if model == "linear24-quantiles":
-                residuals = public["calibration"]["residuals"][scale_key(task)]
+                residuals = _walkforward_residuals(public, task) if v2 else public["calibration"]["residuals"][scale_key(task)]
+                if len(residuals) < 5:
+                    raise ValueError("fewer than 5 historical residuals for quantiles")
                 row["quantiles"] = {str(q): max(task["history"][-1]["ep"], value + percentile(residuals, q)) for q in QUANTILES}
                 row["prediction"] = row["quantiles"]["0.5"]
         except (ValueError, KeyError) as exc:
             row["error"] = str(exc)
         predictions.append(row)
     return {"benchmark_id": public["benchmark_id"], "model_id": model,
-            "model_version": VERSION, "provenance": "offline_coarse_recompute_not_platform_archive",
+            "model_version": VERSION,
+            "provenance": "walk_forward_raw_history" if v2 else "offline_coarse_recompute_not_platform_archive",
             "predictions": predictions}
 
 
@@ -436,7 +635,10 @@ def evaluate(bundle: dict, submission: dict, track: str = "point", bootstrap: in
             result.update(loss=loss, scaled_loss=loss / scale, bias=p - y,
                           below_current=p < task["history"][-1]["ep"])
             if track == "probabilistic":
+                result["covered50"] = q[0.25] <= y <= q[0.75]
                 result["covered90"] = q[0.05] <= y <= q[0.95]
+                result["width50"] = q[0.75] - q[0.25]
+                result["width90"] = q[0.95] - q[0.05]
             rows.append(result)
         except (KeyError, TypeError, ValueError) as exc:
             failures.append({"case_id": key, "reason": str(exc)})
@@ -452,12 +654,16 @@ def evaluate(bundle: dict, submission: dict, track: str = "point", bootstrap: in
         return report
     loss = macro(rows)
     report.update(score=score_transform(loss), macro_scaled_loss=loss,
-                  below_current_count=sum(r["below_current"] for r in rows))
+                  below_current_count=sum(r["below_current"] for r in rows),
+                  median_bias=st.median(r["bias"] for r in rows))
     for dimension in ("horizon_hours", "tier", "era"):
         report["by_" + dimension] = {str(value): score_transform(macro([r for r in rows if r[dimension] == value]))
                                       for value in sorted({r[dimension] for r in rows})}
     if track == "probabilistic":
+        report["coverage50"] = st.mean(r["covered50"] for r in rows)
         report["coverage90"] = st.mean(r["covered90"] for r in rows)
+        report["mean_interval_width50"] = st.mean(r["width50"] for r in rows)
+        report["mean_interval_width90"] = st.mean(r["width90"] for r in rows)
     # Whole-event bootstrap, stratified by era; calibration is held fixed.
     groups = defaultdict(lambda: defaultdict(list))
     for row in rows:
@@ -706,16 +912,24 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--windows", help="explicit start/stop overrides JSON keyed server:event")
     c.add_argument("--settle-hours", type=int, default=24)
     c.add_argument("--delay", type=float, default=0.5)
-    f = commands.add_parser("freeze", help="calibrate on early events and lock later test cases")
+    f = commands.add_parser("freeze", help="legacy protocol-v1 fixed calibration/test pilot")
     f.add_argument("dataset")
     f.add_argument("--calibration-events", type=int, default=10)
     f.add_argument("--horizons", type=int, nargs="+", default=[72, 48, 24, 12, 6])
     f.add_argument("--step-hours", type=int, default=6)
     f.add_argument("--stale-hours", type=int, default=3)
     f.add_argument("--out", required=True)
+    w = commands.add_parser("freeze-walkforward", help="protocol-v2 raw-history expanding-window hindcast")
+    w.add_argument("dataset")
+    w.add_argument("--warmup-events", type=int, default=12)
+    w.add_argument("--horizons", type=int, nargs="+", default=[72, 48, 24, 12, 6])
+    w.add_argument("--stale-hours", type=int, default=3)
+    w.add_argument("--out", required=True)
     p = commands.add_parser("predict", help="run a bundled baseline using public inputs only")
     p.add_argument("tasks")
-    p.add_argument("--model", choices=("linear24", "persistence", "linear24-quantiles", "bestdori-recalibrated"), default="linear24")
+    p.add_argument("--model", choices=("linear24", "persistence", "calibrated-linear24",
+                                      "linear24-quantiles", "bestdori-recalibrated",
+                                      "bestdori-hierarchical"), default="linear24")
     p.add_argument("--out", required=True)
     s = commands.add_parser("score", help="score an external or bundled submission")
     s.add_argument("benchmark")
@@ -735,6 +949,12 @@ def main(argv: list[str] | None = None) -> int:
             bundle = freeze(load(args.dataset), args.calibration_events, tuple(args.horizons), args.step_hours, args.stale_hours)
             write_frozen(Path(args.out), bundle)
             print(json.dumps({"benchmark_id": bundle["benchmark_id"], "cases": len(bundle["tasks"])}))
+        elif args.command == "freeze-walkforward":
+            bundle = freeze_walkforward(load(args.dataset), args.warmup_events, tuple(args.horizons), args.stale_hours)
+            write_frozen(Path(args.out), bundle)
+            print(json.dumps({"benchmark_id": bundle["benchmark_id"], "cases": len(bundle["tasks"]),
+                              "warmup_events": len(bundle["protocol"]["warmup_event_ids"]),
+                              "target_events": len(bundle["protocol"]["target_event_ids"])}))
         elif args.command == "predict":
             save(args.out, predict(load(args.tasks), args.model))
         elif args.command == "score":

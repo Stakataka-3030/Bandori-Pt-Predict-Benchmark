@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- Add protocol v2 walk-forward hindcasting with a configurable warm-up period and expanding historical context for every later event.
+- Preserve every causally visible raw tracker observation in v2 tasks; 6-hour coarse sampling remains only for legacy protocol-v1/Pilot reproduction.
+- Add rolling `calibrated-linear24` and `linear24-quantiles` baselines that learn residuals only from each task's allowed earlier events.
+- Add `bestdori-hierarchical`: Bestdori-formula-family rates shrink event-type history toward the all-history tier rate instead of failing on sparse types.
+- Add 50%/90% coverage, interval-width and median-bias diagnostics to probabilistic reports.
+- Document the JP 80-event audit: 54 complete three-tier events, 237/240 monotone tracker series and 168 observed post-end labels.
+- Keep protocol-v1, `freeze`, and its Pilot baselines for reproducibility.
+
 ## 0.1.5
 
 - Freeze only chronologically sorted events with complete labels for every tier requested during collection; incomplete events no longer consume calibration/test slots.

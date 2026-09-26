@@ -1,10 +1,10 @@
 # Bandori PT Predict Benchmark
 
-**v0.1.5 · 可执行评分器，不是“平均相对误差”报表。**
+**v0.2.0 · 正式 walk-forward / raw-history 协议已实现；旧 Pilot 协议继续保留。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
-> 当前状态：评分器、粗粒度回放、公开接口采集器、四个基线和离线测试已实现。**尚无冻结发布的真实活动 benchmark 数据版本，也没有平台准确度排行榜。** demo 全部为合成数据，不能作为 Bestdori / HHWX / MYCX 的准确度证据。真实 JP 最近 30 场采集得到 89/90 条可用 tracker 序列、65 条自动终值标签；v0.1.5 在冻结前按预设核心档位排除不完整活动，再按真实时间切校准/测试，避免空活动占用校准名额。
+> 当前状态：真实 JP 候选池已实测 80 场，其中 **54 场 T100/T1000/T2000 三档完整、237/240 条 tracker 序列通过单调性校验、168 条终值来自实际 post-end tracker observation**。v0.2.0 新增 `bandoribench-protocol-v2`：前若干完整活动只做 warm-up，后续活动逐场 expanding walk-forward；当前活动输入保留原始 tracker 采样，不再强制压成 6 小时。旧 `freeze` 仍保留用于复现实验性的 JP Pilot。
 
 ## 立即运行
 
@@ -35,28 +35,28 @@ Score = 100 / (1 + L)
 
 只比较同一 `benchmark_id`、同一赛道的成绩。修改数据、标签、校准期、取样粒度、尺度或测试时点，都会得到另一个 benchmark；分数不能跨版本当作统一“能力值”。
 
-## 不需要分钟数据
+## 正式协议保留原始 tracker 采样
 
-默认每 **6 小时**取一个实际历史样本，评测收官前 **72 / 48 / 24 / 12 / 6 小时**。不是在这些窗口内取平均，也不是插值制造观测：每个网格点只取当时已经可见的最后一条记录，保留真实记录时间。默认最多陈旧 3 小时，超过则缺测；有 `available_at` 时同时检查可用时间。
+Protocol v2 仍在收官前 **72 / 48 / 24 / 12 / 6 小时**起报，但每道题向模型提供 `issued_at` 之前所有因果可见的原始 tracker observation；不插值、不制造 6 小时网格。模型可以自行重采样成 30 分钟、1h、3h、6h，或直接处理不规则时间序列。默认要求起报时最新观测不陈旧超过 3 小时；更早历史中的长缺口原样保留，不因此自动废掉整条序列。
 
-同一条记录不反复伪装成新观测，不能无限前向填充。最终结算记录永远不进入输入。采集命令会把请求的核心档位写入 `requested_tiers`；冻结时先排除缺任一核心档位可信终值的整场活动，再按时间切 calibration/test。进入测试集后，某活动某档若有一个必测提前量不合格，则排除该活动该档的全部提前量并记录原因，不能等看过模型成绩再挑样本。
+Protocol v1 / Pilot 的 `freeze` 仍使用 6 小时 coarse-history，以便复现已经得到的 Pilot 分数。正式 JP v1 使用 `freeze-walkforward`，前 12 场完整活动作为 warm-up，后续每一场的 `history_event_ids` 只列出它之前已经结束的完整活动。工具按此列表拟合滚动校准；项目定位为可信离线回放，不做对抗性反作弊沙箱。
 
-当前主任务是**各时点对最终档线的预测**，不是完整未来轨迹评分。多档输入、联合轨迹 / Energy Score 可以后续作为另一个协议版本扩展，当前不宣称已实现。
+当前主任务仍是**各时点对最终档线的预测**。多档联合轨迹 / Energy Score 留给后续协议。
 
 ## 真实数据工作流
 
 第一版预设日服 T100 / T1000 / T2000，避免先把国服已知奖励制度变化混进主榜；这不代表已验证“日服永远稳定”。
 
 ```bash
-# 下载最近活动并保存原始响应、哈希及失败/缺测报告
-python bandoribench.py collect --server jp --source bestdori --recent 30 --tiers 100 1000 2000 --out data/jp
+# 当前正式候选池：最近 80 场
+python bandoribench.py collect --server jp --source bestdori --recent 80 --tiers 100 1000 2000 --out data/jp-80
 
-# 先要求 T100/T1000/T2000 都有可信终值，再按真实时间取较早 10 场校准、后续完整活动测试
-python bandoribench.py freeze data/jp/dataset.json --calibration-events 10 --out runs/jp-v1
+# 正式 v2：完整活动中前 12 场 warm-up，后续逐场 walk-forward，输入保留原始采样
+python bandoribench.py freeze-walkforward data/jp-80/dataset.json --warmup-events 12 --out runs/jp-v1
 
-# 基线仅读取 public 输入，不读取 private 真值
-python bandoribench.py predict runs/jp-v1/public/tasks.json --model linear24 --out runs/jp-linear24.json
-python bandoribench.py score runs/jp-v1/private/benchmark.json runs/jp-linear24.json --out runs/jp-linear24-report.json
+# 基线
+python bandoribench.py predict runs/jp-v1/public/tasks.json --model calibrated-linear24 --out runs/jp-calibrated-linear24.json
+python bandoribench.py score runs/jp-v1/private/benchmark.json runs/jp-calibrated-linear24.json --out runs/jp-calibrated-linear24-report.json
 ```
 
 **终值优先使用 Bestdori `api/archives/all.5.json` 的 `cutoff[server][tier]`（`archive_final`）。** 对归档尚未覆盖的新活动，若 tracker 在 `endAt` 到 `aggregateEndAt` 之间存在收官观测，且这些观测的 PT 完全一致，则自动标记为 `post_end_final`。若多条收官观测互相矛盾，则不猜终值；再尝试明确的 `isFinal` / 稳定的 `aggregateEndAt` 后观测，最后才需要 `--labels verified-labels.json`。
@@ -80,11 +80,13 @@ python bandoribench.py collect --server cn --source hhwx --recent 30 --tiers 500
 | 模型名 | 含义 |
 |---|---|
 | `persistence` | 认为当前分数就是最终分数的弱基线 |
-| `linear24` | 按最近约 24 小时实际涨速外推，评分尺度的参考基线 |
-| `linear24-quantiles` | 用校准期历史残差构造分位数的简单概率基线 |
-| `bestdori-recalibrated` | 公开回归公式家族 + 校准期拟合系数 + 平滑，使用相同粗粒度输入 |
+| `linear24` | 按最近约 24 小时实际涨速外推 |
+| `calibrated-linear24` | linear24 + 预测当时所有既往活动残差中位数；正式点预测强基线 |
+| `linear24-quantiles` | 用预测当时所有既往活动残差构造分位数；概率基线 |
+| `bestdori-hierarchical` | Bestdori 公开公式家族；活动类型 rate 向同档全局历史 rate 收缩，v2 可全覆盖 |
+| `bestdori-recalibrated` | 旧 Pilot 的固定校准期公式家族，仅 protocol-v1 |
 
-最后一种**不是 Bestdori 当年的实际预测档案，也不等同于当前 Bestdori 线上模型**。粗采样会改变回归和平滑结果；系数只从较早校准活动拟合，不调用今天的 `rates.json` 重算过去后冒充历史成绩。特定活动类型不足 3 场校准样本时明确返回失败，不偷偷改用其他模型。
+`bestdori-hierarchical` 与 `bestdori-recalibrated` 都**不是 Bestdori 当年的实际预测档案，也不等同于当前 Bestdori 线上模型**。前者只复用公开公式思想，并在每个 hindcast 时点从当时已有历史重新估 rate；后者保留用于复现 Pilot。
 
 外部算法只需读取 `public/tasks.json` 并按 [提交协议](docs/SCORING.md) 写出 JSON，然后使用同一个 `score` 命令。不限定 Python、神经网络或统计模型。
 
@@ -95,7 +97,7 @@ python bandoribench.py collect --server cn --source hhwx --recent 30 --tiers 500
 - 各活动等权、提前量分层，不让高频采样占据额外权重；置信区间按整场活动重采样，不把采样点当独立活动。
 - 软件测试包含未来数据扰动、终值隔离、冻结校验、国服时间乱序、奖励边界、Bestdori 实际时间字段、`endAt` 收官终值锚定、收官观测冲突拒绝、缺失记录、WIS 及端到端运行。
 
-**边界**：当前是可信运行环境下的离线回放工具，不是对抗性防作弊平台。公开任务集合中包含同一活动的多个时点；它没有操作系统沙箱，不能阻止恶意参赛者偷看其他任务、联网查询已结束活动或读取裁判目录。正式盲测必须逐任务隔离，并在未来活动中封存输入及预测发布时间。历史记录若没有 `available_at`，只标为 `observed_at_only`，不宣称重现当时接口延迟。
+**边界**：当前就是可信算法的离线 hindcast benchmark，不设计对抗性反作弊。v2 的公开 bundle 为了避免重复巨大历史数据，会保存一份 `reference_events`，每题用 `history_event_ids` 明确规定算法在该 hindcast 中允许使用哪些既往活动；内置基线严格按此列表计算。历史记录没有 `available_at` 时仍标为 `observed_at_only`，不宣称重现当时接口延迟。
 
 ## 文件
 
