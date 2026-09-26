@@ -1,6 +1,6 @@
 # Bandori PT Predict Benchmark
 
-**v0.3.1 · CARE-S2：用历史 OOS 自动收缩条件修正和概率扩散，并支持 CN 公共档位面板冻结。**
+**v0.3.2 · 新增 causal-stack：只用此前 OOS 表现融合 multi-tier analog 与 Bestdori，并因果校准 ensemble spread。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
@@ -92,7 +92,8 @@ python bandoribench.py collect --server cn --source hhwx --recent 30 --tiers 500
 | `hhwx-24h` | 精确重放 HHWX UI 的约 23h55m 日速度线性投影 |
 | `rinko-dpra-replay` | 重放 2022 Hoshino `bandori-predict` 保留下来的 Rinko/DPRA rolling-regression + slope/gamma `FIN` 算法 |
 | `care-s` | CARE-S v0.3.0：以多档 analog ensemble 为先验，完整叠加条件修正和 OOS 残差；保留用于消融与复现 |
-| `care-s2` | CARE-S2：继续使用相同特征，但只用更早 OOS 预测自动选择条件修正强度 λ 与残差扩散 τ；λ=τ=0 时退回 analog，不按当前测试结果手调 horizon/tier |
+| `care-s2` | CARE-S2：继续使用相同特征，但只用更早 OOS 预测自动选择条件修正强度 λ 与残差扩散 τ；保留作为条件修正消融 |
+| `causal-stack` | 用当前任务之前的历史 hindcast 学习 analog / Bestdori 的 L1 最优融合权重，并只用更早 OOS WIS 在 0.5–2.0 间选择 analog ensemble 的 spread；不读取当前活动终值 |
 | `bestdori-recalibrated` | 旧 Pilot 的固定校准期公式家族，仅 protocol-v1 |
 
 `bestdori-hierarchical` 与 `bestdori-recalibrated` 都**不是 Bestdori 当年的实际预测档案，也不等同于当前 Bestdori 线上模型**。前者只复用公开公式思想，并在每个 hindcast 时点从当时已有历史重新估 rate；后者保留用于复现 Pilot。
@@ -101,7 +102,7 @@ python bandoribench.py collect --server cn --source hhwx --recent 30 --tiers 500
 
 HHWX 的两条投影按其公开源码窗口和线性外推公式重放，因此在相同 raw prefix 下可复现；HHWX 页面另有的 “Bestdori prediction” 属于 Bestdori 公式家族，不重复列为独立模型。`rinko-dpra-replay` 来自公开保留下来的旧 Rinko 算法代码。茨菇第一预测线依赖 Bestdori `rates.json` 的历史状态，而旧 rate 快照未被可靠归档，因此暂不把“今天用当前 rate 重算过去”冒充历史平台预测；MYCX 的 JP/CN 适配留到后续模型阶段。
 
-CARE-S / CARE-S2 的实现与训练边界见 [docs/CARE.md](docs/CARE.md)。`freeze-walkforward --tiers ...` 可以从一个采集了更多档位的数据集冻结公共子面板；这对 CN 很重要，因为 T1500 历史覆盖远少于 T500/T1000/T2000。显式日历使用 `bandoribench-calendar-v1`；字符串日期项表示在整个覆盖期都已公开，带 `known_at` 的项只有在起报时间不早于该时间时才可见，防止后来公布的调休安排回灌到更早 hindcast。
+CARE-S / CARE-S2 与 causal-stack 的实现与训练边界见 [docs/CARE.md](docs/CARE.md)。`freeze-walkforward --tiers ...` 可以从一个采集了更多档位的数据集冻结公共子面板；这对 CN 很重要，因为 T1500 历史覆盖远少于 T500/T1000/T2000。显式日历使用 `bandoribench-calendar-v1`；字符串日期项表示在整个覆盖期都已公开，带 `known_at` 的项只有在起报时间不早于该时间时才可见，防止后来公布的调休安排回灌到更早 hindcast。
 
 外部算法只需读取 `public/tasks.json` 并按 [提交协议](docs/SCORING.md) 写出 JSON，然后使用同一个 `score` 命令。不限定 Python、神经网络或统计模型。
 

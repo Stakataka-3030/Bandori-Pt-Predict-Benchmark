@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Add `causal-stack`, a protocol-v2 ensemble that combines the multi-tier analog point forecast with hierarchical Bestdori using an L1-optimal blend weight learned only from earlier completed hindcasts.
+- Calibrate probabilistic spread by centering the analog quantile shape on the stacked point forecast and selecting a spread multiplier from earlier OOS WIS only.
+- Keep CARE-S / CARE-S2 as ablations rather than tuning their horizon/tier behavior from the already inspected JP leaderboard.
+
 ## 0.3.1
 
 - Add `care-s2`: choose conditional-correction shrinkage λ and residual-spread scale τ from each task's earlier out-of-sample historical forecasts. No horizon/tier weight is tuned on the current benchmark outcome.

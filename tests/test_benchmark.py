@@ -611,6 +611,40 @@ class BenchmarkTests(unittest.TestCase):
         after = {p["case_id"]: p for p in b.predict(changed, "care-s2")["predictions"]}[target_id]
         self.assertEqual(before, after)
 
+
+    def test_causal_stack_is_full_coverage_and_probabilistic(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        submission = b.predict(b.public_bundle(bundle), "causal-stack")
+        point = b.evaluate(bundle, submission, "point", bootstrap=0)
+        prob = b.evaluate(bundle, submission, "probabilistic", bootstrap=0)
+        self.assertTrue(point["eligible"], point["failures"][:3])
+        self.assertTrue(prob["eligible"], prob["failures"][:3])
+        self.assertEqual(point["coverage"], 1.0)
+        self.assertEqual(prob["coverage"], 1.0)
+        self.assertTrue(all(0.0 <= row["stack"]["bestdori_weight"] <= 1.0
+                            for row in submission["predictions"]))
+
+    def test_causal_stack_future_truth_invariance(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        public = b.public_bundle(bundle)
+        target_id = "jp:9:1000:24"
+        before = {p["case_id"]: p for p in b.predict(public, "causal-stack")["predictions"]}[target_id]
+        changed = copy.deepcopy(public)
+        for event in changed["reference_events"]:
+            if event["event_id"] > 9:
+                for series in event["tiers"].values():
+                    series["label"]["ep"] += 999_999_999
+        after = {p["case_id"]: p for p in b.predict(changed, "causal-stack")["predictions"]}[target_id]
+        self.assertEqual(before, after)
+
+    def test_l1_stack_weight_uses_prior_errors(self):
+        records = [
+            {"analog_point": 100.0, "bestdori_point": 200.0, "final": 180.0},
+            {"analog_point": 100.0, "bestdori_point": 200.0, "final": 160.0},
+            {"analog_point": 100.0, "bestdori_point": 200.0, "final": 170.0},
+        ]
+        self.assertAlmostEqual(b._l1_stack_weight(records), 0.7)
+
     def test_version_markers_match(self):
         import tomllib
         root = Path(__file__).resolve().parents[1]

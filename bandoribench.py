@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 HOUR = 3_600_000
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
@@ -655,7 +655,8 @@ def _walkforward_bestdori_rate(public: dict, task: dict, shrink_k: float = 3.0) 
 def predict(public: dict, model: str = "linear24") -> dict:
     models = ("linear24", "persistence", "calibrated-linear24", "linear24-quantiles",
               "bestdori-recalibrated", "bestdori-hierarchical", "multitier-analog-ensemble",
-              "hhwx-instant", "hhwx-24h", "rinko-dpra-replay", "care-s", "care-s2")
+              "hhwx-instant", "hhwx-24h", "rinko-dpra-replay", "care-s", "care-s2",
+              "causal-stack")
     if model not in models:
         raise ValueError("unknown baseline")
     v2 = public["protocol"]["schema"] == "bandoribench-protocol-v2"
@@ -701,6 +702,8 @@ def predict(public: dict, model: str = "linear24") -> dict:
                 value, row["quantiles"], row["care"] = care_s_forecast(public, task, care_cache)
             elif model == "care-s2":
                 value, row["quantiles"], row["care"] = care_s2_forecast(public, task, care_cache)
+            elif model == "causal-stack":
+                value, row["quantiles"], row["stack"] = causal_stack_forecast(public, task, care_cache)
             row["prediction"] = value
             if model == "linear24-quantiles":
                 residuals = _walkforward_residuals(public, task) if v2 else public["calibration"]["residuals"][scale_key(task)]
@@ -711,11 +714,12 @@ def predict(public: dict, model: str = "linear24") -> dict:
         except (ValueError, KeyError) as exc:
             row["error"] = str(exc)
         predictions.append(row)
-    if model in ("care-s", "care-s2"):
+    if model in ("care-s", "care-s2", "causal-stack"):
         _enforce_care_tier_order(public, predictions)
     return {"benchmark_id": public["benchmark_id"], "model_id": model,
             "model_version": VERSION,
-            "provenance": ("care_s2_adaptive_causal_walk_forward" if model == "care-s2"
+            "provenance": ("causal_stack_oos_tuned" if model == "causal-stack"
+                           else "care_s2_adaptive_causal_walk_forward" if model == "care-s2"
                            else "care_s_causal_walk_forward" if model == "care-s"
                            else "walk_forward_raw_history" if v2
                            else "offline_coarse_recompute_not_platform_archive"),
@@ -1258,6 +1262,159 @@ def care_s2_forecast(public: dict, task: dict, cache: dict | None = None) -> tup
     return quantiles["0.5"], quantiles, meta
 
 
+
+
+def _stack_component_record(public: dict, event: dict, task: dict,
+                            prior_ids: list[int], cache: dict) -> dict | None:
+    key = ("stack_components", event["event_id"], task["tier"], task["horizon_hours"], tuple(prior_ids))
+    cached = cache.get(key)
+    if cached is not None:
+        return cached if cached is not False else None
+    try:
+        mini, task_map = _care_historical_public(public, event, task["horizon_hours"], prior_ids)
+        hist_task = task_map[task["tier"]]
+        analog_point, analog_q, analog_meta = multitier_analog_ensemble(mini, hist_task)
+        bestdori = bestdori_recalibrated(hist_task, _walkforward_bestdori_rate(mini, hist_task))
+        final = event["tiers"][str(task["tier"])]["label"]["ep"]
+        row = {
+            "event_id": event["event_id"],
+            "analog_point": analog_point,
+            "analog_quantiles": analog_q,
+            "bestdori_point": bestdori,
+            "final": final,
+            "current_ep": hist_task["history"][-1]["ep"],
+            "analog_meta": analog_meta,
+        }
+    except (KeyError, ValueError):
+        cache[key] = False
+        return None
+    cache[key] = row
+    return row
+
+
+def _stack_training_records(public: dict, task: dict, cache: dict) -> list[dict]:
+    allowed = set(task.get("history_event_ids", []))
+    ordered = [e for e in public["reference_events"] if e["event_id"] in allowed]
+    key = ("stack_training", task["tier"], task["horizon_hours"], tuple(e["event_id"] for e in ordered))
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    records = []
+    for index, event in enumerate(ordered):
+        prior_ids = [e["event_id"] for e in ordered[:index]]
+        if len(prior_ids) < 5:
+            continue
+        record = _stack_component_record(public, event, task, prior_ids, cache)
+        if record is not None:
+            records.append(record)
+    cache[key] = records
+    return records
+
+
+def _l1_stack_weight(records: list[dict]) -> float:
+    ratios, weights = [], []
+    for row in records:
+        delta = row["bestdori_point"] - row["analog_point"]
+        if abs(delta) < 1e-9:
+            continue
+        ratio = (row["final"] - row["analog_point"]) / delta
+        ratios.append(ratio)
+        weights.append(abs(delta))
+    if not ratios:
+        return 0.0
+    return min(1.0, max(0.0, _weighted_quantile(ratios, weights, 0.5)))
+
+
+def _stack_point(record: dict, weight: float) -> float:
+    return max(record["current_ep"],
+               (1.0 - weight) * record["analog_point"] + weight * record["bestdori_point"])
+
+
+def _stack_oos_records(records: list[dict], cache: dict) -> list[dict]:
+    key = ("stack_oos", tuple(row["event_id"] for row in records))
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    out = []
+    for index in range(3, len(records)):
+        earlier = records[:index]
+        weight = _l1_stack_weight(earlier)
+        row = records[index]
+        point = _stack_point(row, weight)
+        median = row["analog_quantiles"]["0.5"]
+        offsets = {str(q): row["analog_quantiles"][str(q)] - median for q in QUANTILES}
+        out.append({
+            "event_id": row["event_id"], "weight": weight, "point": point,
+            "offsets": offsets, "final": row["final"], "current_ep": row["current_ep"],
+        })
+    cache[key] = out
+    return out
+
+
+def _stack_spread_scale(records: list[dict], cache: dict) -> float:
+    oos = _stack_oos_records(records, cache)
+    if len(oos) < 3:
+        return 1.0
+    grid = (0.5, 0.75, 1.0, 1.25, 1.5, 2.0)
+    scored = []
+    for scale in grid:
+        losses = []
+        for row in oos:
+            quantiles = {
+                str(q): max(row["current_ep"], row["point"] + scale * row["offsets"][str(q)])
+                for q in QUANTILES
+            }
+            ordered = []
+            for q in QUANTILES:
+                value = quantiles[str(q)]
+                if ordered:
+                    value = max(value, ordered[-1])
+                ordered.append(value)
+            quantiles = {str(q): value for q, value in zip(QUANTILES, ordered)}
+            losses.append(weighted_interval_score(quantiles, row["final"]))
+        scored.append((st.mean(losses), abs(scale - 1.0), scale))
+    return min(scored)[2]
+
+
+def causal_stack_forecast(public: dict, task: dict, cache: dict | None = None) -> tuple[float, dict[str, float], dict]:
+    """Causal stacking of analog and hierarchical Bestdori, tuned only on earlier OOS cases."""
+    if public["protocol"]["schema"] != "bandoribench-protocol-v2":
+        raise ValueError("causal-stack requires protocol-v2")
+    cache = cache if cache is not None else {}
+    analog_point, analog_q, analog_meta = multitier_analog_ensemble(public, task)
+    bestdori = bestdori_recalibrated(task, _walkforward_bestdori_rate(public, task))
+    current = {
+        "analog_point": analog_point,
+        "analog_quantiles": analog_q,
+        "bestdori_point": bestdori,
+        "current_ep": task["history"][-1]["ep"],
+    }
+    records = _stack_training_records(public, task, cache)
+    weight = _l1_stack_weight(records)
+    point = _stack_point(current, weight)
+    scale = _stack_spread_scale(records, cache)
+    median = analog_q["0.5"]
+    quantiles = {str(q): max(current["current_ep"], point + scale * (analog_q[str(q)] - median))
+                 for q in QUANTILES}
+    ordered = []
+    for q in QUANTILES:
+        value = quantiles[str(q)]
+        if ordered:
+            value = max(value, ordered[-1])
+        ordered.append(value)
+    quantiles = {str(q): value for q, value in zip(QUANTILES, ordered)}
+    meta = {
+        "training_records": len(records),
+        "bestdori_weight": weight,
+        "analog_weight": 1.0 - weight,
+        "spread_scale": scale,
+        "analog_point": analog_point,
+        "bestdori_point": bestdori,
+        "analog_count": analog_meta["analog_count"],
+    }
+    return quantiles["0.5"], quantiles, meta
+
+
 def _isotonic_nonincreasing(values: list[float]) -> list[float]:
     if not values:
         return []
@@ -1307,7 +1464,10 @@ def _enforce_care_tier_order(public: dict, predictions: list[dict]) -> None:
                 ordered.append(value)
             row["quantiles"] = {str(q): value for q, value in zip(QUANTILES, ordered)}
             row["prediction"] = row["quantiles"]["0.5"]
-            row["care"]["tier_order_constraint"] = True
+            if "care" in row:
+                row["care"]["tier_order_constraint"] = True
+            if "stack" in row:
+                row["stack"]["tier_order_constraint"] = True
 
 def weighted_interval_score(quantiles: dict, y: float) -> float:
     y = number(y, "outcome")
@@ -1671,7 +1831,7 @@ def main(argv: list[str] | None = None) -> int:
                                       "linear24-quantiles", "bestdori-recalibrated",
                                       "bestdori-hierarchical", "multitier-analog-ensemble",
                                       "hhwx-instant", "hhwx-24h", "rinko-dpra-replay",
-                                      "care-s", "care-s2"), default="linear24")
+                                      "care-s", "care-s2", "causal-stack"), default="linear24")
     p.add_argument("--out", required=True)
     s = commands.add_parser("score", help="score an external or bundled submission")
     s.add_argument("benchmark")

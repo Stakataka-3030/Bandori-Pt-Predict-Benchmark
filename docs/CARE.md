@@ -68,3 +68,23 @@ For every current task, CARE-S2 reconstructs rolling historical OOS forecasts an
 Both choices use only events already present in the current task's `history_event_ids`. `lambda=0` means the learned point correction is rejected; `tau=0` means no extra CARE residual convolution is added beyond the analog ensemble's own dispersion. This creates a causal path back to the strong analog baseline when the extra model does not validate historically.
 
 CARE-S2 also caches ridge models and OOS prefix records during one prediction run; the cache changes runtime only, not forecast semantics.
+
+
+## Causal stacking baseline
+
+`causal-stack` is intentionally simpler than CARE-S. It asks whether the strongest two established signals are complementary before adding another learned feature model.
+
+For each current `tier × horizon` task it reconstructs earlier hindcasts for:
+
+- the multi-tier analog median and quantiles;
+- hierarchical Bestdori.
+
+The point blend is
+
+```text
+p = (1-w) * analog + w * bestdori
+```
+
+where `w` is the clipped weighted median of the per-hindcast L1 breakpoints `(truth-analog)/(bestdori-analog)`, weighted by the magnitude of component disagreement. Thus the weight is fit from earlier completed cases only.
+
+Probability output keeps the analog ensemble's quantile shape, recenters it on the stacked point, and selects a spread scale from `{0.5, 0.75, 1, 1.25, 1.5, 2}` using earlier sequential OOS WIS. No current-test horizon or tier score is used to pick either parameter.
