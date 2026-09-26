@@ -16,7 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 HOUR = 3_600_000
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
@@ -529,7 +529,8 @@ def _walkforward_bestdori_rate(public: dict, task: dict, shrink_k: float = 3.0) 
 
 def predict(public: dict, model: str = "linear24") -> dict:
     models = ("linear24", "persistence", "calibrated-linear24", "linear24-quantiles",
-              "bestdori-recalibrated", "bestdori-hierarchical", "multitier-analog-ensemble")
+              "bestdori-recalibrated", "bestdori-hierarchical", "multitier-analog-ensemble",
+              "hhwx-instant", "hhwx-24h", "rinko-dpra-replay")
     if model not in models:
         raise ValueError("unknown baseline")
     v2 = public["protocol"]["schema"] == "bandoribench-protocol-v2"
@@ -558,6 +559,18 @@ def predict(public: dict, model: str = "linear24") -> dict:
                 value = bestdori_recalibrated(task, _walkforward_bestdori_rate(public, task))
             elif model == "multitier-analog-ensemble":
                 value, row["quantiles"], row["ensemble"] = multitier_analog_ensemble(public, task)
+            elif model == "hhwx-instant":
+                if not v2:
+                    raise ValueError("HHWX exact projection replay requires protocol-v2 raw history")
+                value = hhwx_projection(task, "instant")
+            elif model == "hhwx-24h":
+                if not v2:
+                    raise ValueError("HHWX exact projection replay requires protocol-v2 raw history")
+                value = hhwx_projection(task, "24h")
+            elif model == "rinko-dpra-replay":
+                if not v2:
+                    raise ValueError("Rinko/DPRA replay requires protocol-v2 raw history")
+                value = rinko_dpra_replay(task)
             row["prediction"] = value
             if model == "linear24-quantiles":
                 residuals = _walkforward_residuals(public, task) if v2 else public["calibration"]["residuals"][scale_key(task)]
@@ -573,6 +586,119 @@ def predict(public: dict, model: str = "linear24") -> dict:
             "provenance": "walk_forward_raw_history" if v2 else "offline_coarse_recompute_not_platform_archive",
             "predictions": predictions}
 
+
+
+
+HHWX_INSTANT_MIN_WINDOW_MS = (9 * 60 + 45) * 1000
+HHWX_DAY_MIN_WINDOW_MS = (23 * 60 + 55) * 60 * 1000
+
+
+def _hhwx_round(value: float) -> int:
+    """Match JavaScript Math.round for the non-negative tracker projections."""
+    return math.floor(value + 0.5)
+
+
+def hhwx_projection(task: dict, mode: str) -> float:
+    """Replay HHWX's public instant/24h projection from the visible prefix."""
+    if mode not in ("instant", "24h"):
+        raise ValueError("unknown HHWX projection mode")
+    history = list(task["history"])
+    if not history:
+        raise ValueError("empty tracker prefix")
+    points = history
+    if history[0]["time"] > task["start_at"]:
+        points = [{"time": task["start_at"], "ep": 0.0}] + history
+    last = points[-1]
+    minimum = HHWX_INSTANT_MIN_WINDOW_MS if mode == "instant" else HHWX_DAY_MIN_WINDOW_MS
+    references = [p for p in points[:-1] if last["time"] - p["time"] >= minimum]
+    if not references:
+        raise ValueError(f"HHWX {mode} projection has no minimum-window reference")
+    reference = max(references, key=lambda p: p["time"])
+    elapsed = last["time"] - reference["time"]
+    if elapsed <= 0:
+        raise ValueError("HHWX projection reference is not earlier than latest point")
+    velocity_per_ms = (last["ep"] - reference["ep"]) / elapsed
+    projected = last["ep"] + velocity_per_ms * (task["end_at"] - last["time"])
+    return float(max(0, _hhwx_round(projected)))
+
+
+def _xy_regression(xs: list[float], ys: list[float]) -> tuple[float, float]:
+    if len(xs) != len(ys) or len(xs) < 2:
+        raise ValueError("not enough DPRA regression points")
+    mx, my = st.mean(xs), st.mean(ys)
+    variance = sum((x - mx) ** 2 for x in xs)
+    if variance <= 0:
+        raise ValueError("singular DPRA regression")
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / variance
+    return my - slope * mx, slope
+
+
+def rinko_dpra_replay(task: dict, pred_length: int = 6, gamma_threshold: float = 1.0) -> float:
+    """Replay the public Rinko/DPRA FIN curve used by the 2022 Hoshino plugin."""
+    duration = task["end_at"] - task["start_at"]
+    if duration <= 0:
+        raise ValueError("invalid event duration")
+    rows, seen = [], set()
+    for point in task["history"]:
+        pct = round((point["time"] - task["start_at"]) / duration * 100.0, 3)
+        pct = min(100.0, pct)
+        item = (pct, float(point["ep"]))
+        if item not in seen:
+            seen.add(item)
+            rows.append(item)
+    if len(rows) < pred_length + 1:
+        raise ValueError("Rinko/DPRA needs more tracker points")
+
+    reg = {}
+    for num in range(pred_length + 1, len(rows) + 1):
+        current_pct = rows[num - 1][0]
+        lower_span = math.ceil((1.0 - current_pct / 100.0) * len(rows))
+        left = num - lower_span
+        if left <= pred_length + 1:
+            left = pred_length - 1
+        elif left == num:
+            left = num - 1
+        else:
+            left = num - lower_span
+        window = rows[left:num]
+        try:
+            intercept, slope = _xy_regression([x for x, _ in window], [y for _, y in window])
+        except ValueError:
+            continue
+        reg[current_pct] = {
+            "reg_intercept": intercept,
+            "reg_slope": slope,
+            "reg_final": intercept + slope * 100.0,
+        }
+
+    slopes = {}
+    for num in range(2, len(rows) + 1):
+        (x0, y0), (x1, y1) = rows[num - 2:num]
+        if x1 == x0:
+            continue
+        slope = (y0 - y1) / (x0 - x1)
+        slopes[x1] = y1 + (100.0 - x1) * slope
+
+    common = [pct for pct, _ in rows if pct in reg and pct in slopes]
+    if not common:
+        raise ValueError("Rinko/DPRA cannot initialize")
+    diffs = [abs(reg[pct]["reg_final"] - slopes[pct]) for pct in common]
+    correction = st.mean(diffs)
+
+    mcp = 90.0
+    for pct in common:
+        if reg[pct]["reg_slope"] == 0 and pct > 90 and pct != 100:
+            mcp = pct
+            break
+
+    pct = common[-1]
+    gamma = 1.0 - ((pct - mcp) / (100.0 - mcp))
+    if gamma > gamma_threshold:
+        gamma = gamma_threshold
+    prediction = reg[pct]["reg_final"] + correction * gamma
+    if not math.isfinite(prediction):
+        raise ValueError("non-finite Rinko/DPRA prediction")
+    return float(prediction)
 
 
 def _point_at_or_before(history: list[dict], when: int) -> dict | None:
@@ -1033,7 +1159,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("tasks")
     p.add_argument("--model", choices=("linear24", "persistence", "calibrated-linear24",
                                       "linear24-quantiles", "bestdori-recalibrated",
-                                      "bestdori-hierarchical", "multitier-analog-ensemble"), default="linear24")
+                                      "bestdori-hierarchical", "multitier-analog-ensemble",
+                                      "hhwx-instant", "hhwx-24h", "rinko-dpra-replay"), default="linear24")
     p.add_argument("--out", required=True)
     s = commands.add_parser("score", help="score an external or bundled submission")
     s.add_argument("benchmark")

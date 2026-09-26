@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2
+
+- Add `hhwx-instant` and `hhwx-24h`, exact protocol-v2 replays of HHWX's public short-window and 24-hour tracker projections using the published 9m45s / 23h55m minimum windows.
+- Add `rinko-dpra-replay`, a standard-library reconstruction of the public Rinko/DPRA rolling regression + slope/gamma `FIN` forecast retained by the 2022 Hoshino plugin.
+- Keep Tsugu/MYCX migration out of this patch: historical Tsugu rates are not reliably archived, while MYCX's JP/CN priors require deliberate refitting rather than a cosmetic server switch.
+- Document that the eventual main model should be refit/calibrated on CN after JP architecture work.
+
 ## 0.2.1
 
 - Add `multitier-analog-ensemble`, a causal protocol-v2 model using T100/T1000/T2000 recent growth fractions and cross-tier ratios to retrieve historical analog events.

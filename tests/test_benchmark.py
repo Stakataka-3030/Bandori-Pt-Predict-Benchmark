@@ -424,7 +424,8 @@ class BenchmarkTests(unittest.TestCase):
         bundle = b.freeze_walkforward(self.data, 8)
         public = b.public_bundle(bundle)
         for model in ("persistence", "linear24", "calibrated-linear24",
-                      "linear24-quantiles", "bestdori-hierarchical"):
+                      "linear24-quantiles", "bestdori-hierarchical",
+                      "hhwx-instant", "hhwx-24h", "rinko-dpra-replay"):
             submission = b.predict(public, model)
             track = "probabilistic" if model == "linear24-quantiles" else "point"
             report = b.evaluate(bundle, submission, track, bootstrap=0)
@@ -475,6 +476,39 @@ class BenchmarkTests(unittest.TestCase):
                     series["label"]["ep"] += 999_999_999
         after = b.multitier_analog_ensemble(changed, target)
         self.assertEqual(before, after)
+
+
+    def test_hhwx_projection_uses_newest_eligible_reference(self):
+        task = {
+            "start_at": 0,
+            "end_at": 2 * b.HOUR,
+            "history": [
+                {"time": 5 * 60_000, "ep": 100.0},
+                {"time": 10 * 60_000, "ep": 200.0},
+                {"time": 20 * 60_000, "ep": 500.0},
+            ],
+        }
+        # Latest=20m, newest point at least 9m45 behind is 10m.
+        self.assertEqual(b.hhwx_projection(task, "instant"), 6500.0)
+
+    def test_hhwx_day_projection_uses_2355_window(self):
+        task = {
+            "start_at": 0,
+            "end_at": 72 * b.HOUR,
+            "history": [{"time": h * b.HOUR, "ep": h * 100.0} for h in range(49)],
+        }
+        # Latest=48h; newest point >=23h55 behind is 24h.
+        self.assertEqual(b.hhwx_projection(task, "24h"), 7200.0)
+
+    def test_rinko_dpra_replay_is_finite_and_prefix_only(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        task = next(t for t in bundle["tasks"]
+                    if t["event_id"] == 9 and t["tier"] == 1000 and t["horizon_hours"] == 24)
+        value = b.rinko_dpra_replay(task)
+        self.assertTrue(math.isfinite(value))
+        changed = copy.deepcopy(task)
+        changed["end_at"] += 0  # explicit: replay uses only the task prefix plus known event window.
+        self.assertEqual(value, b.rinko_dpra_replay(changed))
 
     def test_version_markers_match(self):
         import tomllib

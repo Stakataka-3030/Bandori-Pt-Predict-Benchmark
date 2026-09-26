@@ -1,6 +1,6 @@
 # Bandori PT Predict Benchmark
 
-**v0.2.1 · 在 walk-forward 协议上加入第一版多档联合 analog ensemble。**
+**v0.2.2 · 加入 HHWX 两条公开投影和 Rinko/DPRA 历史算法重放。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
@@ -69,7 +69,7 @@ python bandoribench.py score runs/jp-v1/private/benchmark.json runs/jp-calibrate
 
 **以国服 310 实际开场时刻为制度切换边界**：此前为 T1000 语音表情，之后为 T500 / T1500 两档语音表情。对 310 / 311 / 312 / 313 / 314 设置显式规则，其他活动看实际时间；没有边界信息就标记 unknown，绝不使用 `event_id >= 310`。
 
-这些是用户提供的领域纠正，不伪装成已独立核验的官方奖励表。通用算法不被强迫使用奖励特征；评分报告按 `era` 分层，避免把制度前后混成不透明的总体数值。跨制度测试可以做，但须显式标明它是分布变化挑战集。国服采集例如：
+这些是用户提供的领域纠正，不伪装成已独立核验的官方奖励表。通用算法不被强迫使用奖励特征；评分报告按 `era` 分层，避免把制度前后混成不透明的总体数值。跨制度测试可以做，但须显式标明它是分布变化挑战集。最终主模型计划在 JP 上完成架构验证后，对 CN 历史重新拟合/校准，而不是把 JP 参数原样搬过去。国服采集例如：
 
 ```bash
 python bandoribench.py collect --server cn --source hhwx --recent 30 --tiers 500 1000 1500 2000 --out data/cn
@@ -85,11 +85,16 @@ python bandoribench.py collect --server cn --source hhwx --recent 30 --tiers 500
 | `linear24-quantiles` | 用预测当时所有既往活动残差构造分位数；概率基线 |
 | `bestdori-hierarchical` | Bestdori 公开公式家族；活动类型 rate 向同档全局历史 rate 收缩，v2 可全覆盖 |
 | `multitier-analog-ensemble` | 同时读取当前 T100/T1000/T2000 的 6/12/24h 相对涨速和跨档位比值，在当时可用历史中找近邻活动；历史活动的“当前进度→最终倍率”形成 point + quantile ensemble |
+| `hhwx-instant` | 精确重放 HHWX UI 的约 9m45s 短窗速度线性投影 |
+| `hhwx-24h` | 精确重放 HHWX UI 的约 23h55m 日速度线性投影 |
+| `rinko-dpra-replay` | 重放 2022 Hoshino `bandori-predict` 保留下来的 Rinko/DPRA rolling-regression + slope/gamma `FIN` 算法 |
 | `bestdori-recalibrated` | 旧 Pilot 的固定校准期公式家族，仅 protocol-v1 |
 
 `bestdori-hierarchical` 与 `bestdori-recalibrated` 都**不是 Bestdori 当年的实际预测档案，也不等同于当前 Bestdori 线上模型**。前者只复用公开公式思想，并在每个 hindcast 时点从当时已有历史重新估 rate；后者保留用于复现 Pilot。
 
 `multitier-analog-ensemble` 是后续 WNC-style 联合模型之前的统计探针：它不训练神经网络，不使用当前活动真值；只测试“多档联合状态 + 历史轨迹形状 + ensemble”本身是否能超过现有单档基线。
+
+HHWX 的两条投影按其公开源码窗口和线性外推公式重放，因此在相同 raw prefix 下可复现；HHWX 页面另有的 “Bestdori prediction” 属于 Bestdori 公式家族，不重复列为独立模型。`rinko-dpra-replay` 来自公开保留下来的旧 Rinko 算法代码。茨菇第一预测线依赖 Bestdori `rates.json` 的历史状态，而旧 rate 快照未被可靠归档，因此暂不把“今天用当前 rate 重算过去”冒充历史平台预测；MYCX 的 JP/CN 适配留到后续模型阶段。
 
 外部算法只需读取 `public/tasks.json` 并按 [提交协议](docs/SCORING.md) 写出 JSON，然后使用同一个 `score` 命令。不限定 Python、神经网络或统计模型。
 
