@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3
+
+- Fix the HHWX instant-projection regression test's hand-calculated expected value (500 + 300/10min × 100min = 3500); implementation was already correct.
+
 ## 0.2.2
 
 - Add `hhwx-instant` and `hhwx-24h`, exact protocol-v2 replays of HHWX's public short-window and 24-hour tracker projections using the published 9m45s / 23h55m minimum windows.

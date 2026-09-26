@@ -489,7 +489,7 @@ class BenchmarkTests(unittest.TestCase):
             ],
         }
         # Latest=20m, newest point at least 9m45 behind is 10m.
-        self.assertEqual(b.hhwx_projection(task, "instant"), 6500.0)
+        self.assertEqual(b.hhwx_projection(task, "instant"), 3500.0)
 
     def test_hhwx_day_projection_uses_2355_window(self):
         task = {
