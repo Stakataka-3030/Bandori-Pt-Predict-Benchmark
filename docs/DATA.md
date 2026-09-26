@@ -5,6 +5,7 @@
 - Bestdori 活动索引：`https://bestdori.com/api/events/all.3.json`
 - Bestdori 活动详情：`https://bestdori.com/api/events/{event_id}.json`
 - Bestdori 档线：`https://bestdori.com/api/tracker/data?server={0|1|2|3}&event={event_id}&tier={tier}`
+- Bestdori 活动归档最终档线：`https://bestdori.com/api/archives/all.5.json`，每场的 `cutoff[server][tier]`
 - HHWX 档线：`https://hhwx.org/api/bandori/tracker/data?server={0|1|2|3}&event={event_id}&type=event&tier={tier}`
 
 服务器依次为 JP/EN/TW/CN。以上接口取自公开实现，不是游戏官方 API 承诺。用户侧首次真实采集已确认 Bestdori 请求可达，并暴露、修复了 v0.1.1 的时间字段错误；仍不能据此宣称已实测全历史覆盖或数据频率。
@@ -65,6 +66,7 @@
 
 可信终值标签只接受：
 
+- `archive_final`：Bestdori 活动归档 `cutoff[server][tier]` 直接给出的最终档线。归档条目没有单独时间戳，因此标签时间使用该活动的 `aggregateEndAt` 作为结算锚点，并保留归档 URL、活动、区服、档位证据。
 - `explicit_final`：源记录有 `isFinal=true`，且时间不早于停止累计 PT；它是提供方标记，不自动等于独立游戏结算核验。
 - `post_aggregate_observation`：历史 tracker 没有 explicit final 标志，但存在时间达到或晚于 `aggregateEndAt` 的档线观测；采用最后一条这样的观测，并保留 URL 与时间证据。这是“结算后观测”标签，不冒充独立官方核验。
 - `verified`：人工/其他可靠来源核验，并写明 evidence。

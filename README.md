@@ -1,10 +1,10 @@
 # Bandori PT Predict Benchmark
 
-**v0.1.2 · 可执行评分器，不是“平均相对误差”报表。**
+**v0.1.3 · 可执行评分器，不是“平均相对误差”报表。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
-> 当前状态：评分器、粗粒度回放、公开接口采集器、四个基线和离线测试已实现。**尚无经过核验的真实活动 benchmark 数据版本，也没有平台准确度排行榜。** demo 全部为合成数据，不能作为 Bestdori / HHWX / MYCX 的准确度证据。v0.1.2 已修复首次真实采集暴露出的 Bestdori 时间字段错误；真实活动语料仍需重新采集并审计。
+> 当前状态：评分器、粗粒度回放、公开接口采集器、四个基线和离线测试已实现。**尚无冻结发布的真实活动 benchmark 数据版本，也没有平台准确度排行榜。** demo 全部为合成数据，不能作为 Bestdori / HHWX / MYCX 的准确度证据。v0.1.3 使用 Bestdori 活动归档 `cutoff` 作为首选终值来源，避免从 tracker 末尾时间猜最终档线。
 
 ## 立即运行
 
@@ -59,7 +59,7 @@ python bandoribench.py predict runs/jp-v1/public/tasks.json --model linear24 --o
 python bandoribench.py score runs/jp-v1/private/benchmark.json runs/jp-linear24.json --out runs/jp-linear24-report.json
 ```
 
-**第一条命令不保证每条序列都自动获得可信终值。** 若源记录有 `isFinal`，采集器可直接使用；Bestdori tracker 本身通常只有 `time/ep`，因此只有在档线记录时间达到或晚于活动详情的 `aggregateEndAt` 时，才自动标记为 `post_aggregate_observation`。若没有这样的记录，则仍需 `--labels verified-labels.json`，格式见 [数据协议](docs/DATA.md)。尚无合格标签时，`freeze` 会拒绝制造成绩。
+**第一条命令会优先从 Bestdori `api/archives/all.5.json` 的 `cutoff[server][tier]` 读取归档最终档线，并标记为 `archive_final`。** 若归档缺该活动/档位，再依次尝试源记录 `isFinal`、`aggregateEndAt` 之后的 tracker 观测；仍无终值时才需要 `--labels verified-labels.json`。格式见 [数据协议](docs/DATA.md)。尚无合格标签时，`freeze` 会拒绝制造成绩。
 
 `--source hhwx` 可切换档线来源；元数据仍显式来自 Bestdori，并记录来源，不做无痕自动回退。**预测目标时刻使用 Bestdori `endAt`（活动终止 / PT 停止），`aggregateEndAt` 只用于判断结算后的档线观测能否作为自动终值标签。** 两者分别保存，不能混为一个字段。可用 `--windows` 提供核验后的 `start_at` / `end_at`，以及可选的 `aggregate_end_at` 覆盖。
 

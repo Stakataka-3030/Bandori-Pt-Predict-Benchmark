@@ -16,7 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 HOUR = 3_600_000
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
@@ -134,8 +134,8 @@ def validate_dataset(data: dict) -> list[dict]:
             label = dict(s["label"])
             label["ep"] = number(label["ep"], "final PT", 1)
             label["time"] = integer(label["time"], "label time", e["end_at"])
-            if label.get("quality") not in ("explicit_final", "post_aggregate_observation", "verified", "synthetic"):
-                raise ValueError("terminal labels require explicit_final / post_aggregate_observation / verified / synthetic")
+            if label.get("quality") not in ("archive_final", "explicit_final", "post_aggregate_observation", "verified", "synthetic"):
+                raise ValueError("terminal labels require archive_final / explicit_final / post_aggregate_observation / verified / synthetic")
             if not label.get("evidence"):
                 raise ValueError("label evidence is required")
             if label["quality"] == "synthetic" and not data.get("synthetic", False):
@@ -469,6 +469,21 @@ def server_value(meta: dict, field: str, server: str) -> int:
     return integer(int(value), field, 1)
 
 
+def archive_cutoff(archives: dict, event_id: int, server: str, tier: int) -> float | None:
+    """Read Bestdori's archived final cutoff for one fixed tier."""
+    event = archives.get(str(event_id))
+    if not isinstance(event, dict):
+        return None
+    cutoff = event.get("cutoff")
+    index = SERVERS[server]
+    if not isinstance(cutoff, list) or len(cutoff) <= index or not isinstance(cutoff[index], dict):
+        return None
+    value = cutoff[index].get(str(tier))
+    if value is None:
+        return None
+    return number(value, f"archive cutoff T{tier}", 1)
+
+
 class PublicClient:
     def __init__(self, directory: Path, delay: float = 0.5):
         self.directory, self.delay = directory, delay
@@ -509,6 +524,9 @@ def collect(args: argparse.Namespace) -> None:
         index = client.get("https://bestdori.com/api/events/all.3.json")
         if not isinstance(index, dict):
             raise ValueError("event index must be a dictionary")
+        archives = client.get("https://bestdori.com/api/archives/all.5.json")
+        if not isinstance(archives, dict):
+            raise ValueError("event archive index must be a dictionary")
         transition = server_value(index["310"], "startAt", "cn") if args.server == "cn" and "310" in index else None
         candidates = []
         for eid, meta in index.items():
@@ -559,6 +577,18 @@ def collect(args: argparse.Namespace) -> None:
                         finals = [p for p in points if p["isFinal"] and p["time"] >= stop]
                         post_aggregate = [p for p in points if p["time"] >= aggregate_end]
                         label = labels.get(key)
+                        archived = archive_cutoff(archives, eid, args.server, tier)
+                        if label is None and archived is not None:
+                            label = {
+                                "ep": archived,
+                                "time": aggregate_end,
+                                "quality": "archive_final",
+                                "evidence": (
+                                    "https://bestdori.com/api/archives/all.5.json"
+                                    f"; event={eid}; server={SERVERS[args.server]}; tier={tier}; "
+                                    f"aggregateEndAt={aggregate_end}"
+                                ),
+                            }
                         if label is None and finals:
                             if len({p["ep"] for p in finals}) != 1:
                                 raise ValueError("conflicting provider final labels")

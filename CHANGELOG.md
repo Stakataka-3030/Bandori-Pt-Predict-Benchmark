@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- Use Bestdori `/api/archives/all.5.json` archived `cutoff[server][tier]` as the primary final-cutoff label source.
+- Keep explicit provider-final and post-`aggregateEndAt` observations only as fallbacks; ordinary last tracker observations remain ineligible.
+- Add archive-shape regression tests and provenance for each archive-derived label.
+
 ## 0.1.2
 
 - Fix real Bestdori collection: use `endAt` as the forecast/PT-stop time instead of the nonexistent `aggregateAt`, and preserve `aggregateEndAt` separately as the result-finalization anchor.
