@@ -1,6 +1,6 @@
 # Bandori PT Predict Benchmark
 
-**v0.3.3 · 固化 CN 2019–2026 官方节假日/调休日历，加入 calendar-fetch 与公告时点因果语义。**
+**v0.3.4 · Protocol v2 改为按 event × horizon 的完整多档面板局部排除坏点，不再因单个起报时点缺口丢掉整场其他 horizons。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
@@ -40,6 +40,8 @@ Score = 100 / (1 + L)
 Protocol v2 仍在收官前 **72 / 48 / 24 / 12 / 6 小时**起报，但每道题向模型提供 `issued_at` 之前所有因果可见的原始 tracker observation；不插值、不制造 6 小时网格。模型可以自行重采样成 30 分钟、1h、3h、6h，或直接处理不规则时间序列。默认要求起报时最新观测不陈旧超过 3 小时；更早历史中的长缺口原样保留，不因此自动废掉整条序列。
 
 Protocol v1 / Pilot 的 `freeze` 仍使用 6 小时 coarse-history，以便复现已经得到的 Pilot 分数。正式 JP v1 使用 `freeze-walkforward`，前 12 场完整活动作为 warm-up，后续每一场的 `history_event_ids` 只列出它之前已经结束的完整活动。工具按此列表拟合滚动校准；项目定位为可信离线回放，不做对抗性反作弊沙箱。
+
+Protocol v2 的 target eligibility 以 **event × horizon 的完整请求档位面板**为最小单位：若某个起报时点任一请求档位因 stale / insufficient history 无法形成任务，该时点的全部请求档位一起排除，以保持 multi-tier analog / CARE 的 sibling 输入完整；同一活动其他正常 horizons 继续保留。冻结协议同时记录 `eligible_target_event_ids`、`fully_excluded_target_event_ids`、`excluded_case_count` 和 `excluded_cases_by_reason`。
 
 当前主任务仍是**各时点对最终档线的预测**。多档联合轨迹 / Energy Score 留给后续协议。
 

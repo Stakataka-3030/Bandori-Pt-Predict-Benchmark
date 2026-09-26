@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 HOUR = 3_600_000
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
@@ -581,24 +581,55 @@ def freeze_walkforward(data: dict, warmup_events: int = 12,
               for k, v in errors.items() if len(v) >= 3}
     for i, e in enumerate(events[warmup_events:], start=warmup_events):
         allowed = [past["event_id"] for past in events[:i]]
-        for tier in map(str, requested_tiers):
-            series, batch = e["tiers"][tier], []
-            try:
-                for h in horizons:
+        for h in horizons:
+            panel, failures = [], {}
+            for tier in map(str, requested_tiers):
+                series = e["tiers"][tier]
+                try:
                     task = make_raw_task(e, tier, h, protocol)
                     if scale_key(task) not in scales:
                         raise ValueError(f"fewer than 3 warm-up scale cases for {scale_key(task)}")
                     task["history_event_ids"] = allowed
-                    batch.append(task)
-            except ValueError as exc:
-                exclusions.append({"stage": "hindcast", "event": e["event_id"],
-                                   "tier": tier, "reason": str(exc)})
+                    panel.append((tier, task, series["label"]))
+                except ValueError as exc:
+                    failures[tier] = str(exc)
+            if failures:
+                panel_failures = dict(sorted(failures.items(), key=lambda item: int(item[0])))
+                for tier in map(str, requested_tiers):
+                    exclusions.append({
+                        "stage": "hindcast",
+                        "event": e["event_id"],
+                        "tier": tier,
+                        "horizon": h,
+                        "reason": failures.get(tier, "incomplete multi-tier panel"),
+                        "panel_failures": panel_failures,
+                    })
                 continue
-            for task in batch:
+            for _, task, label in panel:
                 tasks.append(task)
-                truth[task["case_id"]] = series["label"]
+                truth[task["case_id"]] = label
     if not tasks:
         raise ValueError("no eligible walk-forward cases")
+    hindcast_exclusions = [row for row in exclusions if row.get("stage") == "hindcast"]
+    reason_counts = defaultdict(int)
+    for row in hindcast_exclusions:
+        reason_counts[row["reason"]] += 1
+    eligible_event_ids = {task["event_id"] for task in tasks}
+    protocol["eligibility_policy"] = "complete requested-tier panel per event and horizon"
+    protocol["target_case_count_before_eligibility"] = (
+        len(targets) * len(requested_tiers) * len(horizons)
+    )
+    protocol["eligible_case_count"] = len(tasks)
+    protocol["excluded_case_count"] = len(hindcast_exclusions)
+    protocol["excluded_cases_by_reason"] = dict(sorted(reason_counts.items()))
+    protocol["eligible_target_event_ids"] = [
+        e["event_id"] for e in targets if e["event_id"] in eligible_event_ids
+    ]
+    protocol["fully_excluded_target_event_ids"] = [
+        e["event_id"] for e in targets if e["event_id"] not in eligible_event_ids
+    ]
+    if protocol["eligible_case_count"] + protocol["excluded_case_count"] != protocol["target_case_count_before_eligibility"]:
+        raise ValueError("internal target eligibility accounting mismatch")
     body = {
         "protocol": protocol,
         "scales": scales,
@@ -1899,7 +1930,9 @@ def main(argv: list[str] | None = None) -> int:
             write_frozen(Path(args.out), bundle)
             print(json.dumps({"benchmark_id": bundle["benchmark_id"], "cases": len(bundle["tasks"]),
                               "warmup_events": len(bundle["protocol"]["warmup_event_ids"]),
-                              "target_events": len(bundle["protocol"]["target_event_ids"])}))
+                              "target_events": len(bundle["protocol"]["target_event_ids"]),
+                              "eligible_target_events": len(bundle["protocol"]["eligible_target_event_ids"]),
+                              "excluded_cases": bundle["protocol"]["excluded_case_count"]}))
         elif args.command == "predict":
             save(args.out, predict(load(args.tasks), args.model))
         elif args.command == "score":

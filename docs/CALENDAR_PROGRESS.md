@@ -1,12 +1,12 @@
 # CN Calendar Provider Progress
 
-**Branch:** `calendar-provider-v033`  
-**Target version:** `0.3.3`  
+**Branch:** `protocol-v2-horizon-eligibility-v034`  
+**Target version:** `0.3.4`  
 **Updated:** 2026-09-26
 
 ## Goal
 
-Finish the frozen CN calendar input required before creating `runs/cn-core-v1`: authoritative 2019–2026 holidays, makeup workdays, causal announcement timing, deterministic regeneration, and benchmark fingerprint integration.
+The CN calendar input is complete. Before declaring `runs/cn-core-v1` final, refine protocol-v2 target eligibility so isolated tracker outages remove only the affected event × horizon panel while preserving the complete multi-tier sibling set required by analog/CARE models.
 
 ## Completed implementation
 
@@ -20,7 +20,7 @@ Finish the frozen CN calendar input required before creating `runs/cn-core-v1`: 
 - Added committed `calendars/cn-2019-2026.json`.
 - Added calendar package to setuptools packaging.
 - Added regression tests for official adjustments, cross-year New Year classification, three-stage revision knowledge, CLI generation, and committed-snapshot reproducibility.
-- Bumped project markers consistently to 0.3.3.
+- Calendar provider landed in v0.3.3; the CN-Core eligibility refinement targets v0.3.4.
 
 ## Data policy
 
@@ -43,3 +43,10 @@ python bandoribench.py freeze-walkforward data/cn-80/dataset.json \
   --warmup-events 12 --tiers 500 1000 2000 \
   --calendar calendars/cn-2019-2026.json --out runs/cn-core-v1
 ```
+
+
+## CN-Core dry-run finding
+
+The first v0.3.3 CN-Core freeze produced 585 cases from 42 target events because three activities (291, 298, 301) each had a tracker outage at only selected forecast origins. The old target loop rejected an entire event-tier batch when any one horizon failed, discarding 33 otherwise valid cases.
+
+v0.3.4 changes the minimum eligibility unit to a complete requested-tier **event × horizon panel**. This keeps multi-tier sibling inputs intact while preserving unaffected horizons. On the observed CN-Core data, the expected result is 618 eligible cases with 12 excluded cases and all 42 target events still represented.
