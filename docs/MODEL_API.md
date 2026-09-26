@@ -148,3 +148,21 @@ python bandoribench.py model-eval D:\Creations\PtBenchmark\PtBenchmark-Shared\cn
 For the 42-event CN-Core split, the central benchmark has 30 development events, 6 selection events, and 6 final events. The corresponding 90 selection/final cases are not 90 independent samples: they are 6 events × 5 horizons × 3 tiers, with strong within-event dependence. Treat the event count as the effective model-selection sample size.
 
 Recommended tournament rule: each worker nominates exactly one development champion to the central judge; the judge evaluates all champions once on selection; one global winner advances to final. Selection and final reports intentionally omit case/tier/horizon diagnostics.
+
+
+## Explicit reward-regime shift semantics
+
+The CN reward era is part of each event/task metadata. The benchmark uses actual chronology, with explicit CN corrections around events 310–314, rather than assuming numeric event ID order:
+
+- `voice1000`: the older T1000 voice-expression reward regime.
+- `voice500_1500`: the newer T500/T1500 reward-boundary regime.
+
+`model-plan` now records `target_era_counts` and `initial_training_era_counts` for every phase. It also emits a top-level `regime_shift` object. If every final-era label is unseen before final, `final_role` is `regime_shift_challenge`; mixed and same-regime tails are labeled separately.
+
+For the current CN-Core chronology, this makes the interpretation explicit: development/selection validate the legacy regime, while final is intended to measure transfer into the new reward regime. Final remains prequential. Therefore its central one-shot report separates:
+
+- `first_new_regime_event_score`: zero-shot transfer before any new-regime final truth has been observed;
+- `post_adaptation_score`: later final events after at least the first new-regime truth has been delivered through `observe_event`;
+- `overall_regime_shift_score`: the normal final macro score across the whole final phase.
+
+These are final-report diagnostics, not new tuning surfaces. Workers still receive only the development devkit.

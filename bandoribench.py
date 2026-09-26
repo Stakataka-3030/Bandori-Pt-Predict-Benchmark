@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.3.7"
+VERSION = "0.3.8"
 HOUR = 3_600_000
 MODEL_API_VERSION = "bandoribench-model-api-v1"
 MODEL_PHASES = ("development", "selection", "final", "all")
@@ -1714,6 +1714,12 @@ def model_evaluation_plan(bundle: dict, development_blocks: int = 5) -> dict:
     for task in bundle["tasks"]:
         task_ids_by_event[task["event_id"]].append(task["case_id"])
 
+    def era_counts(event_ids: list[int]) -> dict[str, int]:
+        counts = defaultdict(int)
+        for eid in event_ids:
+            counts[str(ref[eid].get("era", "unknown"))] += 1
+        return dict(sorted(counts.items()))
+
     def make_phase(name: str, targets: list[int], initial_training: list[int],
                    block_count: int) -> dict:
         missing = [eid for eid in initial_training + targets if eid not in ref]
@@ -1729,6 +1735,8 @@ def model_evaluation_plan(bundle: dict, development_blocks: int = 5) -> dict:
             "case_ids": cases,
             "initial_training_event_ids": initial_training,
             "initial_training_cutoff_ms": cutoff,
+            "target_era_counts": era_counts(targets),
+            "initial_training_era_counts": era_counts(initial_training),
             "blocks": _balanced_blocks(targets, block_count),
         }
 
@@ -1739,6 +1747,32 @@ def model_evaluation_plan(bundle: dict, development_blocks: int = 5) -> dict:
         "final": make_phase("final", final, warmup + development + selection, 1),
         "all": make_phase("all", target_ids, warmup, min(development_blocks, len(target_ids))),
     }
+
+    final_training_ids = phases["final"]["initial_training_event_ids"]
+    known_eras = set(era_counts(final_training_ids))
+    final_eras = set(era_counts(final))
+    unseen_final_eras = sorted(final_eras - known_eras)
+    first_unseen_event_id = next(
+        (eid for eid in final if str(ref[eid].get("era", "unknown")) in unseen_final_eras),
+        None,
+    )
+    if not final:
+        final_role = "not_exposed"
+    elif unseen_final_eras and final_eras.isdisjoint(known_eras):
+        final_role = "regime_shift_challenge"
+    elif unseen_final_eras:
+        final_role = "mixed_regime_shift_holdout"
+    else:
+        final_role = "same_regime_tail_holdout"
+    regime_shift = {
+        "final_role": final_role,
+        "source_era_counts": era_counts(final_training_ids),
+        "target_era_counts": era_counts(final),
+        "unseen_target_eras": unseen_final_eras,
+        "first_unseen_regime_event_id": first_unseen_event_id,
+        "prequential_adaptation": bool(first_unseen_event_id),
+    }
+
     body = {
         "schema": "bandoribench-model-eval-plan-v1",
         "api_version": MODEL_API_VERSION,
@@ -1747,10 +1781,12 @@ def model_evaluation_plan(bundle: dict, development_blocks: int = 5) -> dict:
             "split": ("development-only exposed devkit" if is_devkit
                       else "chronological_70_15_15_by_target_event"),
             "development": "tune architecture/hyperparameters; detailed diagnostics allowed",
-            "selection": "choose among already-developed candidates; no case-level losses by default",
-            "final": "one-shot tail holdout; aggregate report only by default",
+            "selection": "choose among already-developed candidates; aggregate output only",
+            "final": ("one-shot regime-shift challenge when final eras are unseen; "
+                      "otherwise one-shot chronological tail holdout"),
             "all": "prequential research diagnostic; do not use as the sole model-selection target",
         },
+        "regime_shift": regime_shift,
         "phases": phases,
     }
     body["plan_id"] = digest(body)
@@ -2044,6 +2080,42 @@ def run_model_api(bundle: dict, runner: list[str], phase: str = "development",
     }
     report["temporal_checkpoints"] = diagnostics
     report["evaluation_plan_policy"] = plan["policy"]
+    report["evaluation_role"] = (
+        plan["regime_shift"]["final_role"] if phase == "final" else phase
+    )
+
+    if (phase == "final" and report["eligible"]
+            and plan["regime_shift"]["unseen_target_eras"]):
+        regime = plan["regime_shift"]
+        first_shift = regime.get("first_unseen_regime_event_id")
+        shift_diag = {
+            "role": regime["final_role"],
+            "source_era_counts": regime["source_era_counts"],
+            "target_era_counts": regime["target_era_counts"],
+            "unseen_target_eras": regime["unseen_target_eras"],
+            "first_new_regime_event_id": first_shift,
+            "overall_regime_shift_score": report["score"],
+        }
+        if first_shift is not None:
+            final_order = list(info["target_event_ids"])
+            first_index = final_order.index(first_shift)
+            first_rows = [row for row in rows if row["event_id"] == first_shift]
+            post_ids = final_order[first_index + 1:]
+            post_set = set(post_ids)
+            post_rows = [row for row in rows if row["event_id"] in post_set]
+            shift_diag["first_new_regime_event_score"] = (
+                score_transform(macro(first_rows)) if first_rows else None
+            )
+            shift_diag["post_adaptation_event_ids"] = post_ids
+            shift_diag["post_adaptation_score"] = (
+                score_transform(macro(post_rows)) if post_rows else None
+            )
+            shift_diag["note"] = (
+                "The first-new-regime score measures zero-shot transfer. "
+                "Post-adaptation covers later final events after the runner has observed "
+                "the first new-regime event truth through the normal prequential update."
+            )
+        report["regime_shift_diagnostics"] = shift_diag
 
     if phase in ("selection", "final"):
         report.pop("case_losses", None)

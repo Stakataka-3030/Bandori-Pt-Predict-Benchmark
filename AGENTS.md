@@ -11,3 +11,4 @@
 - Treat development as the tuning surface, selection as candidate choice, and final as a one-shot tail holdout; do not add richer final diagnostics by default.
 - Do not describe protocol-v2 public/tasks.json as truth-free or competition-safe: reference_events retain labels for trusted replay. Use model-export-devkit for worker distribution.
 - In model competitions, count held-out events separately from tier × horizon cases; selection/final candidate budgets are global across workers, not per-worker leaderboard sweeps.
+- Treat CN reward-era changes as explicit regime-shift semantics: preserve actual chronological era labels, report unseen-final-era transitions, and keep zero-shot/post-adaptation final diagnostics aggregate-only.
