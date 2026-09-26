@@ -8,6 +8,7 @@ import json
 import math
 import random
 import statistics as st
+import subprocess
 import sys
 import time
 import urllib.error
@@ -17,8 +18,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.3.4"
+VERSION = "0.3.5"
 HOUR = 3_600_000
+MODEL_API_VERSION = "bandoribench-model-api-v1"
+MODEL_PHASES = ("development", "selection", "final", "all")
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
          2000, 3000, 4000, 5000, 10000, 20000, 30000, 40000, 50000, 70000, 100000)
@@ -1555,13 +1558,23 @@ def score_transform(loss: float) -> float:
     return 100.0 / (1.0 + loss)
 
 
-def evaluate(bundle: dict, submission: dict, track: str = "point", bootstrap: int = 200) -> dict:
+def evaluate(bundle: dict, submission: dict, track: str = "point", bootstrap: int = 200,
+             case_ids: set[str] | None = None) -> dict:
     verify_bundle(bundle)
     if submission.get("benchmark_id") != bundle["benchmark_id"]:
         raise ValueError("submission targets a different benchmark")
     if track not in ("point", "probabilistic") or bootstrap < 0:
         raise ValueError("invalid evaluation options")
-    expected = {t["case_id"]: t for t in bundle["tasks"]}
+    all_expected = {t["case_id"]: t for t in bundle["tasks"]}
+    if case_ids is None:
+        expected = all_expected
+    else:
+        unknown = set(case_ids) - set(all_expected)
+        if unknown:
+            raise ValueError(f"evaluation view contains unknown cases: {sorted(unknown)[:3]}")
+        expected = {key: all_expected[key] for key in all_expected if key in case_ids}
+        if not expected:
+            raise ValueError("evaluation view has no cases")
     submitted = {}
     for row in submission["predictions"]:
         key = row["case_id"]
@@ -1603,7 +1616,8 @@ def evaluate(bundle: dict, submission: dict, track: str = "point", bootstrap: in
               "synthetic": bundle["protocol"]["synthetic"], "eligible": eligible,
               "score": None, "coverage": len(rows) / len(expected), "n_expected": len(expected),
               "n_scored": len(rows), "failures": failures, "dataset_exclusions": bundle["exclusions"],
-              "knowledge_time": bundle["protocol"]["knowledge_time"]}
+              "knowledge_time": bundle["protocol"]["knowledge_time"],
+              "evaluation_subset": case_ids is not None}
     # No flattering partial score: full case coverage is required on each track.
     if not eligible:
         return report
@@ -1635,6 +1649,337 @@ def evaluate(bundle: dict, submission: dict, track: str = "point", bootstrap: in
         report["event_bootstrap_95_interval"] = [percentile(scores, 0.025), percentile(scores, 0.975)]
     report["case_losses"] = rows
     return report
+
+
+
+def _balanced_blocks(values: list[int], count: int) -> list[list[int]]:
+    if count <= 0:
+        raise ValueError("block count must be positive")
+    if not values:
+        return []
+    count = min(count, len(values))
+    base, extra = divmod(len(values), count)
+    blocks, cursor = [], 0
+    for index in range(count):
+        size = base + (1 if index < extra else 0)
+        blocks.append(values[cursor:cursor + size])
+        cursor += size
+    return blocks
+
+
+def _benchmark_path(path: str | Path) -> Path:
+    p = Path(path)
+    if p.is_dir():
+        p = p / "private" / "benchmark.json"
+    if not p.is_file():
+        raise ValueError(f"benchmark not found: {p}")
+    return p
+
+
+def model_evaluation_plan(bundle: dict, development_blocks: int = 5) -> dict:
+    """Deterministic chronological dev/selection/final split for model work."""
+    verify_bundle(bundle)
+    if bundle["protocol"].get("schema") != "bandoribench-protocol-v2":
+        raise ValueError("model API requires protocol-v2")
+    target_ids = list(bundle["protocol"]["target_event_ids"])
+    if len(target_ids) < 3:
+        raise ValueError("model API needs at least 3 target events")
+    n_selection = max(1, round(len(target_ids) * 0.15))
+    n_final = max(1, round(len(target_ids) * 0.15))
+    while n_selection + n_final >= len(target_ids):
+        if n_selection >= n_final and n_selection > 1:
+            n_selection -= 1
+        elif n_final > 1:
+            n_final -= 1
+        else:
+            raise ValueError("not enough target events for three model-evaluation phases")
+    n_development = len(target_ids) - n_selection - n_final
+    development = target_ids[:n_development]
+    selection = target_ids[n_development:n_development + n_selection]
+    final = target_ids[n_development + n_selection:]
+    warmup = list(bundle["protocol"]["warmup_event_ids"])
+    ref = {e["event_id"]: e for e in bundle["reference_events"]}
+    task_ids_by_event = defaultdict(list)
+    for task in bundle["tasks"]:
+        task_ids_by_event[task["event_id"]].append(task["case_id"])
+
+    def make_phase(name: str, targets: list[int], initial_training: list[int],
+                   block_count: int) -> dict:
+        missing = [eid for eid in initial_training + targets if eid not in ref]
+        if missing:
+            raise ValueError(f"evaluation plan references missing events: {missing[:3]}")
+        cases = [case_id for eid in targets for case_id in task_ids_by_event.get(eid, [])]
+        scored_events = [eid for eid in targets if task_ids_by_event.get(eid)]
+        cutoff = max((ref[eid]["end_at"] for eid in initial_training), default=0)
+        return {
+            "name": name,
+            "target_event_ids": targets,
+            "scored_event_ids": scored_events,
+            "case_ids": cases,
+            "initial_training_event_ids": initial_training,
+            "initial_training_cutoff_ms": cutoff,
+            "blocks": _balanced_blocks(targets, block_count),
+        }
+
+    phases = {
+        "development": make_phase("development", development, warmup,
+                                  min(development_blocks, len(development))),
+        "selection": make_phase("selection", selection, warmup + development, 1),
+        "final": make_phase("final", final, warmup + development + selection, 1),
+        "all": make_phase("all", target_ids, warmup, min(6, len(target_ids))),
+    }
+    body = {
+        "schema": "bandoribench-model-eval-plan-v1",
+        "api_version": MODEL_API_VERSION,
+        "benchmark_id": bundle["benchmark_id"],
+        "policy": {
+            "split": "chronological_70_15_15_by_target_event",
+            "development": "tune architecture/hyperparameters; detailed diagnostics allowed",
+            "selection": "choose among already-developed candidates; no case-level losses by default",
+            "final": "one-shot tail holdout; aggregate report only by default",
+            "all": "prequential research diagnostic; do not use as the sole model-selection target",
+        },
+        "phases": phases,
+    }
+    body["plan_id"] = digest(body)
+    return body
+
+
+def model_training_export(bundle: dict, phase: str,
+                          development_blocks: int = 5) -> dict:
+    if phase not in MODEL_PHASES:
+        raise ValueError("unknown model-evaluation phase")
+    plan = model_evaluation_plan(bundle, development_blocks)
+    info = plan["phases"][phase]
+    allowed = set(info["initial_training_event_ids"])
+    events = [e for e in bundle["reference_events"] if e["event_id"] in allowed]
+    return {
+        "schema": "bandoribench-model-training-v1",
+        "api_version": MODEL_API_VERSION,
+        "benchmark_id": bundle["benchmark_id"],
+        "plan_id": plan["plan_id"],
+        "phase": phase,
+        "training_cutoff_ms": info["initial_training_cutoff_ms"],
+        "training_event_ids": info["initial_training_event_ids"],
+        "protocol": {
+            "server": events[0]["server"] if events else None,
+            "requested_tiers": bundle["protocol"]["requested_tiers"],
+            "horizons": bundle["protocol"]["horizons"],
+            "knowledge_time": bundle["protocol"]["knowledge_time"],
+        },
+        "calendar": bundle.get("calendar"),
+        "events": events,
+    }
+
+
+def _model_exchange(proc: subprocess.Popen, message: dict, expected_type: str) -> dict:
+    if proc.stdin is None or proc.stdout is None:
+        raise ValueError("model runner pipes are unavailable")
+    try:
+        proc.stdin.write(json.dumps(message, ensure_ascii=False, allow_nan=False) + "\n")
+        proc.stdin.flush()
+    except BrokenPipeError as exc:
+        raise ValueError(f"model runner exited before {expected_type}") from exc
+    line = proc.stdout.readline()
+    if not line:
+        code = proc.poll()
+        raise ValueError(f"model runner closed stdout before {expected_type}; exit={code}")
+    try:
+        response = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"model runner stdout is not JSON: {line[:200]!r}") from exc
+    if not isinstance(response, dict):
+        raise ValueError("model runner response must be a JSON object")
+    if response.get("type") == "error":
+        raise ValueError(f"model runner error: {response.get('message', 'unspecified')}")
+    if response.get("type") != expected_type:
+        raise ValueError(f"model runner returned {response.get('type')!r}; expected {expected_type!r}")
+    return response
+
+
+def _temporal_diagnostics(rows: list[dict], blocks: list[list[int]]) -> list[dict]:
+    out = []
+    cumulative_ids: set[int] = set()
+    for index, event_ids in enumerate(blocks, start=1):
+        event_set = set(event_ids)
+        block_rows = [row for row in rows if row["event_id"] in event_set]
+        cumulative_ids.update(event_ids)
+        cumulative_rows = [row for row in rows if row["event_id"] in cumulative_ids]
+        block_loss = macro(block_rows) if block_rows else None
+        cumulative_loss = macro(cumulative_rows) if cumulative_rows else None
+        out.append({
+            "block": index,
+            "event_ids": event_ids,
+            "n_cases": len(block_rows),
+            "score": score_transform(block_loss) if block_loss is not None else None,
+            "macro_scaled_loss": block_loss,
+            "cumulative_score": score_transform(cumulative_loss) if cumulative_loss is not None else None,
+        })
+    return out
+
+
+def run_model_api(bundle: dict, runner: list[str], phase: str = "development",
+                  track: str = "point", bootstrap: int = 200,
+                  development_blocks: int = 5) -> tuple[dict, dict]:
+    """Run an external persistent model process without exposing future/current truth."""
+    if phase not in MODEL_PHASES:
+        raise ValueError("unknown model-evaluation phase")
+    if track not in ("point", "probabilistic"):
+        raise ValueError("invalid model-evaluation track")
+    runner = list(runner)
+    if runner and runner[0] == "--":
+        runner = runner[1:]
+    if not runner:
+        raise ValueError("model-eval requires a runner command after --")
+    plan = model_evaluation_plan(bundle, development_blocks)
+    info = plan["phases"][phase]
+    if not info["case_ids"]:
+        raise ValueError(f"model-evaluation phase {phase} has no scored cases")
+    reference = {e["event_id"]: e for e in bundle["reference_events"]}
+    tasks_by_event_horizon: dict[tuple[int, int], list[dict]] = defaultdict(list)
+    selected_cases = set(info["case_ids"])
+    for task in bundle["tasks"]:
+        if task["case_id"] in selected_cases:
+            tasks_by_event_horizon[(task["event_id"], task["horizon_hours"])].append(task)
+    for panel in tasks_by_event_horizon.values():
+        panel.sort(key=lambda task: task["tier"])
+
+    proc = subprocess.Popen(runner, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            text=True, encoding="utf-8", bufsize=1)
+    predictions = []
+    ready = None
+    try:
+        init = {
+            "type": "init",
+            "api_version": MODEL_API_VERSION,
+            "context": {
+                "benchmark_id": bundle["benchmark_id"],
+                "plan_id": plan["plan_id"],
+                "phase": phase,
+                "track": track,
+                "server": bundle["reference_events"][0]["server"],
+                "requested_tiers": bundle["protocol"]["requested_tiers"],
+                "horizons": bundle["protocol"]["horizons"],
+                "quantiles": list(QUANTILES),
+                "calendar": bundle.get("calendar"),
+                "initial_training_cutoff_ms": info["initial_training_cutoff_ms"],
+            },
+        }
+        ready = _model_exchange(proc, init, "ready")
+        if ready.get("api_version") != MODEL_API_VERSION:
+            raise ValueError("model runner API version mismatch")
+        model_id = ready.get("model_id")
+        model_version = ready.get("model_version")
+        if not isinstance(model_id, str) or not model_id or not isinstance(model_version, str) or not model_version:
+            raise ValueError("model runner must declare non-empty model_id and model_version")
+
+        def observe(event_id: int) -> None:
+            response = _model_exchange(
+                proc,
+                {"type": "observe_event", "event": reference[event_id]},
+                "observed",
+            )
+            if response.get("event_id") != event_id:
+                raise ValueError("model runner acknowledged the wrong observed event")
+
+        declared_initial_cutoff = ready.get("training_cutoff_ms")
+        replay_cutoff = (declared_initial_cutoff
+                         if isinstance(declared_initial_cutoff, int)
+                         and not isinstance(declared_initial_cutoff, bool)
+                         and declared_initial_cutoff >= 0
+                         else 0)
+        for event_id in info["initial_training_event_ids"]:
+            if reference[event_id]["end_at"] > replay_cutoff:
+                observe(event_id)
+
+        for event_id in info["target_event_ids"]:
+            for horizon in bundle["protocol"]["horizons"]:
+                panel_tasks = tasks_by_event_horizon.get((event_id, horizon), [])
+                if not panel_tasks:
+                    continue
+                panel_id = f"{reference[event_id]['server']}:{event_id}:{horizon}"
+                response = _model_exchange(proc, {
+                    "type": "forecast_panel",
+                    "panel": {
+                        "panel_id": panel_id,
+                        "event_id": event_id,
+                        "horizon_hours": horizon,
+                        "tasks": panel_tasks,
+                    },
+                }, "forecast")
+                if response.get("panel_id") != panel_id:
+                    raise ValueError("model runner returned forecast for the wrong panel")
+                rows = response.get("predictions")
+                if not isinstance(rows, list):
+                    raise ValueError("model runner predictions must be an array")
+                expected_ids = {task["case_id"] for task in panel_tasks}
+                returned_ids = {row.get("case_id") for row in rows if isinstance(row, dict)}
+                if len(rows) != len(expected_ids) or returned_ids != expected_ids:
+                    raise ValueError(f"model runner case IDs do not match panel {panel_id}")
+                predictions.extend(rows)
+            observe(event_id)
+        _model_exchange(proc, {"type": "finish"}, "finished")
+    finally:
+        if proc.stdin:
+            proc.stdin.close()
+        if proc.stdout:
+            proc.stdout.close()
+        if proc.poll() is None:
+            proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+    if ready is None:
+        raise ValueError("model runner did not initialize")
+    submission = {
+        "benchmark_id": bundle["benchmark_id"],
+        "model_id": ready["model_id"],
+        "model_version": ready["model_version"],
+        "provenance": "bandoribench_model_api_v1",
+        "evaluation_phase": phase,
+        "predictions": predictions,
+    }
+    report = evaluate(bundle, submission, track, bootstrap, selected_cases)
+    declared_cutoff = ready.get("training_cutoff_ms")
+    declaration_valid = (
+        isinstance(declared_cutoff, int) and not isinstance(declared_cutoff, bool)
+        and declared_cutoff >= 0
+        and declared_cutoff <= info["initial_training_cutoff_ms"]
+    )
+    rows = list(report.get("case_losses", []))
+    diagnostics = _temporal_diagnostics(rows, info["blocks"]) if report["eligible"] else []
+    report["model_api"] = {
+        "api_version": MODEL_API_VERSION,
+        "plan_id": plan["plan_id"],
+        "phase": phase,
+        "model_id": ready["model_id"],
+        "model_version": ready["model_version"],
+        "declared_initial_training_cutoff_ms": declared_cutoff,
+        "allowed_initial_training_cutoff_ms": info["initial_training_cutoff_ms"],
+        "training_declaration_ok": declaration_valid,
+        "protocol_eligible": bool(report["eligible"] and declaration_valid),
+        "supports_online_update": bool(ready.get("supports_online_update", False)),
+        "note": ("training_cutoff_ms means the latest BandoriBench event label included in the initial "
+                 "checkpoint; 0 means no benchmark labels. This is a declaration, not a sandbox proof."),
+    }
+    report["temporal_checkpoints"] = diagnostics
+    report["evaluation_plan_policy"] = plan["policy"]
+
+    if phase in ("selection", "final"):
+        report.pop("case_losses", None)
+    if phase == "final":
+        for key in ("by_horizon_hours", "by_tier", "by_era", "below_current_count",
+                    "median_bias", "coverage50", "coverage90",
+                    "mean_interval_width50", "mean_interval_width90"):
+            report.pop(key, None)
+        report["temporal_checkpoints"] = []
+        report["final_holdout"] = True
+    elif phase == "all":
+        report["research_diagnostic_only"] = True
+    return submission, report
 
 
 def server_value(meta: dict, field: str, server: str) -> int:
@@ -1887,6 +2232,25 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("--tiers", type=int, nargs="+", choices=TIERS,
                    help="override dataset requested_tiers for this frozen benchmark")
     w.add_argument("--out", required=True)
+    mp = commands.add_parser("model-plan", help="show chronological model-development/selection/final phases")
+    mp.add_argument("benchmark", help="frozen benchmark directory or private/benchmark.json")
+    mp.add_argument("--development-blocks", type=int, default=5)
+    mp.add_argument("--out")
+    mx = commands.add_parser("model-export-training", help="export only labels allowed before a model-evaluation phase")
+    mx.add_argument("benchmark", help="frozen benchmark directory or private/benchmark.json")
+    mx.add_argument("--phase", choices=MODEL_PHASES, default="development")
+    mx.add_argument("--development-blocks", type=int, default=5)
+    mx.add_argument("--out", required=True)
+    me = commands.add_parser("model-eval", help="run a persistent external model API runner and score it directly")
+    me.add_argument("benchmark", help="frozen benchmark directory or private/benchmark.json")
+    me.add_argument("--phase", choices=MODEL_PHASES, default="development")
+    me.add_argument("--track", choices=("point", "probabilistic"), default="point")
+    me.add_argument("--bootstrap", type=int, default=200)
+    me.add_argument("--development-blocks", type=int, default=5)
+    me.add_argument("--submission-out")
+    me.add_argument("--out", required=True)
+    me.add_argument("runner", nargs=argparse.REMAINDER,
+                    help="runner command; place it after --, e.g. -- python model.py checkpoint.bin")
     p = commands.add_parser("predict", help="run a bundled baseline using public inputs only")
     p.add_argument("tasks")
     p.add_argument("--model", choices=("linear24", "persistence", "calibrated-linear24",
@@ -1933,6 +2297,31 @@ def main(argv: list[str] | None = None) -> int:
                               "target_events": len(bundle["protocol"]["target_event_ids"]),
                               "eligible_target_events": len(bundle["protocol"]["eligible_target_event_ids"]),
                               "excluded_cases": bundle["protocol"]["excluded_case_count"]}))
+        elif args.command == "model-plan":
+            bundle = load(_benchmark_path(args.benchmark))
+            plan = model_evaluation_plan(bundle, args.development_blocks)
+            if args.out:
+                save(args.out, plan)
+            print(json.dumps(plan, ensure_ascii=False, indent=2))
+        elif args.command == "model-export-training":
+            bundle = load(_benchmark_path(args.benchmark))
+            export = model_training_export(bundle, args.phase, args.development_blocks)
+            save(args.out, export)
+            print(json.dumps({"benchmark_id": export["benchmark_id"], "phase": export["phase"],
+                              "training_events": len(export["events"]),
+                              "training_cutoff_ms": export["training_cutoff_ms"]}))
+        elif args.command == "model-eval":
+            bundle = load(_benchmark_path(args.benchmark))
+            submission, report = run_model_api(bundle, args.runner, args.phase, args.track,
+                                               args.bootstrap, args.development_blocks)
+            if args.submission_out:
+                save(args.submission_out, submission)
+            save(args.out, report)
+            print(json.dumps({"model_id": report["model_id"], "phase": args.phase,
+                              "track": args.track, "eligible": report["eligible"],
+                              "protocol_eligible": report["model_api"]["protocol_eligible"],
+                              "score": report["score"], "coverage": report["coverage"]}))
+            return 0 if report["model_api"]["protocol_eligible"] else 2
         elif args.command == "predict":
             save(args.out, predict(load(args.tasks), args.model))
         elif args.command == "score":
@@ -1940,7 +2329,7 @@ def main(argv: list[str] | None = None) -> int:
             save(args.out, report)
             print(json.dumps({k: report[k] for k in ("model_id", "track", "synthetic", "eligible", "score", "coverage")}))
             return 0 if report["eligible"] else 2
-        else:
+        elif args.command == "demo":
             out = Path(args.out)
             bundle = freeze(synthetic_dataset(), 8)
             write_frozen(out, bundle)

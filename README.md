@@ -1,6 +1,6 @@
 # Bandori PT Predict Benchmark
 
-**v0.3.4 · Protocol v2 改为按 event × horizon 的完整多档面板局部排除坏点，不再因单个起报时点缺口丢掉整场其他 horizons。**
+**v0.3.5 · 新增外部模型 JSONL runner 接口、泄漏受控训练导出，以及 development / selection / final 三阶段评测。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
@@ -110,6 +110,22 @@ HHWX 的两条投影按其公开源码窗口和线性外推公式重放，因此
 CARE-S / CARE-S2 与 causal-stack 的实现与训练边界见 [docs/CARE.md](docs/CARE.md)。`freeze-walkforward --tiers ...` 可以从一个采集了更多档位的数据集冻结公共子面板；这对 CN 很重要，因为 T1500 历史覆盖远少于 T500/T1000/T2000。显式日历使用 `bandoribench-calendar-v1`。CN 2019–2026 快照由仓库内置的国务院办公厅公告规则离线生成；`known_at` 控制公告可见时间，修订项再用 `previous_type` + `previous_known_at` 表示修订前已知安排，避免任何一层公告回灌到更早 hindcast。实现、来源和当前进度见 [Calendar provider](docs/CALENDAR_PROVIDER.md) 与 [Calendar progress](docs/CALENDAR_PROGRESS.md)。
 
 外部算法只需读取 `public/tasks.json` 并按 [提交协议](docs/SCORING.md) 写出 JSON，然后使用同一个 `score` 命令。不限定 Python、神经网络或统计模型。
+
+## 外部训练模型接口
+
+v0.3.5 推荐训练型模型走 [Model API](docs/MODEL_API.md)，而不是直接读取整个 `reference_events`。评测器会启动一个长期驻留 runner，只在活动预测全部完成后才通过 `observe_event` 交付该活动真值；`forecast_panel` 只包含当前可见输入。
+
+标准工作流按时间切为 development / selection / final，默认约 70% / 15% / 15%。development 提供多个连续时间块与累计 checkpoint 供调参；selection 默认隐藏 case-level loss；final 进一步只保留粗粒度结果，作为一次性尾部 holdout。由于 benchmark 在本地，这些是防止意外泄漏和规范实验流程的机制，不是对抗性沙箱。
+
+常用入口：
+
+```bash
+python bandoribench.py model-plan runs/cn-core-v1
+python bandoribench.py model-export-training runs/cn-core-v1 --phase final --out data/model-final-train.json
+python bandoribench.py model-eval runs/cn-core-v1 --phase development --track point --out runs/model-dev.json -- python my_model.py checkpoint.bin
+```
+
+Python runner 可直接使用 `bandoribench_model.serve()`；仓库的 `examples/persistence_model.py` 是最小可运行示例。
 
 ## 防止漂亮但无效的成绩
 

@@ -50,3 +50,8 @@ python bandoribench.py freeze-walkforward data/cn-80/dataset.json \
 The first v0.3.3 CN-Core freeze produced 585 cases from 42 target events because three activities (291, 298, 301) each had a tracker outage at only selected forecast origins. The old target loop rejected an entire event-tier batch when any one horizon failed, discarding 33 otherwise valid cases.
 
 v0.3.4 changes the minimum eligibility unit to a complete requested-tier **event × horizon panel**. This keeps multi-tier sibling inputs intact while preserving unaffected horizons. On the observed CN-Core data, the expected result is 618 eligible cases with 12 excluded cases and all 42 target events still represented.
+
+
+## Model API follow-up (v0.3.5)
+
+The calendar and horizon-local eligibility work is complete in v0.3.4. v0.3.5 adds a leak-controlled external model runner and chronological development/selection/final workflow so CN-Core can be used for model experimentation without handing current/future labels directly to training code.

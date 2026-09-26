@@ -7,3 +7,5 @@
 - Keep test truth out of predictor inputs, normalize using calibration only, and preserve raw loss alongside the display score.
 - Do not turn missing data into zero PT, guess terminal labels, change a frozen benchmark in place, or silently drop failed predictions.
 - Do not commit secrets, raw third-party archives, or real referee truth. Respect API limits and redistribution terms.
+- External model APIs must not expose current/future target labels to forecast calls; only completed events may be streamed as training observations after their forecast panels are finished.
+- Treat development as the tuning surface, selection as candidate choice, and final as a one-shot tail holdout; do not add richer final diagnostics by default.
