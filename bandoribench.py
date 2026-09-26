@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.3.5"
+VERSION = "0.3.6"
 HOUR = 3_600_000
 MODEL_API_VERSION = "bandoribench-model-api-v1"
 MODEL_PHASES = ("development", "selection", "final", "all")
@@ -2199,6 +2199,13 @@ def write_frozen(out: Path, bundle: dict) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    runner_argv: list[str] | None = None
+    if raw_argv and raw_argv[0] == "model-eval" and "--" in raw_argv:
+        separator = raw_argv.index("--")
+        runner_argv = raw_argv[separator + 1:]
+        raw_argv = raw_argv[:separator]
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=VERSION)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -2249,8 +2256,6 @@ def main(argv: list[str] | None = None) -> int:
     me.add_argument("--development-blocks", type=int, default=5)
     me.add_argument("--submission-out")
     me.add_argument("--out", required=True)
-    me.add_argument("runner", nargs=argparse.REMAINDER,
-                    help="runner command; place it after --, e.g. -- python model.py checkpoint.bin")
     p = commands.add_parser("predict", help="run a bundled baseline using public inputs only")
     p.add_argument("tasks")
     p.add_argument("--model", choices=("linear24", "persistence", "calibrated-linear24",
@@ -2267,7 +2272,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", required=True)
     d = commands.add_parser("demo", help="end-to-end SYNTHETIC demonstration")
     d.add_argument("--out", required=True)
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_argv)
+    if args.command == "model-eval":
+        args.runner = runner_argv or []
     try:
         if args.command == "collect":
             if args.recent <= 0 or args.delay < 0 or args.settle_hours < 0:

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.6
+
+- Fix `model-eval` CLI parsing: split the runner command at the explicit `--` before argparse processes benchmark options, so `--phase`, `--track`, `--out`, and `--submission-out` are no longer swallowed by the runner positional.
+- Keep the documented `... -- python model.py checkpoint.bin` syntax unchanged.
+- Add an end-to-end CLI regression test that invokes `model-eval` with the separator and scores the example persistence runner.
+
 ## 0.3.5
 
 - Add a persistent JSONL external-model API with a small Python `bandoribench_model.serve()` helper and executable persistence-runner example.
