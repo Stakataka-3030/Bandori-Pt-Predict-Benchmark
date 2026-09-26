@@ -450,6 +450,32 @@ class BenchmarkTests(unittest.TestCase):
                     "mean_interval_width90", "median_bias"):
             self.assertIn(key, report)
 
+
+    def test_multitier_analog_ensemble_is_causal_and_full_coverage(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        public = b.public_bundle(bundle)
+        submission = b.predict(public, "multitier-analog-ensemble")
+        point = b.evaluate(bundle, submission, "point", bootstrap=0)
+        prob = b.evaluate(bundle, submission, "probabilistic", bootstrap=0)
+        self.assertTrue(point["eligible"], point["failures"][:3])
+        self.assertTrue(prob["eligible"], prob["failures"][:3])
+        self.assertEqual(point["coverage"], 1.0)
+        self.assertEqual(prob["coverage"], 1.0)
+        self.assertIn("ensemble", submission["predictions"][0])
+
+    def test_multitier_analog_ignores_future_reference_truth(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        public = b.public_bundle(bundle)
+        target = next(t for t in bundle["tasks"] if t["event_id"] == 9 and t["tier"] == 1000 and t["horizon_hours"] == 24)
+        before = b.multitier_analog_ensemble(public, target)
+        changed = copy.deepcopy(public)
+        for e in changed["reference_events"]:
+            if e["event_id"] > 9:
+                for series in e["tiers"].values():
+                    series["label"]["ep"] += 999_999_999
+        after = b.multitier_analog_ensemble(changed, target)
+        self.assertEqual(before, after)
+
     def test_version_markers_match(self):
         import tomllib
         root = Path(__file__).resolve().parents[1]

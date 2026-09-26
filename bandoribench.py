@@ -16,7 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 HOUR = 3_600_000
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
@@ -529,7 +529,7 @@ def _walkforward_bestdori_rate(public: dict, task: dict, shrink_k: float = 3.0) 
 
 def predict(public: dict, model: str = "linear24") -> dict:
     models = ("linear24", "persistence", "calibrated-linear24", "linear24-quantiles",
-              "bestdori-recalibrated", "bestdori-hierarchical")
+              "bestdori-recalibrated", "bestdori-hierarchical", "multitier-analog-ensemble")
     if model not in models:
         raise ValueError("unknown baseline")
     v2 = public["protocol"]["schema"] == "bandoribench-protocol-v2"
@@ -556,6 +556,8 @@ def predict(public: dict, model: str = "linear24") -> dict:
                 if not v2:
                     raise ValueError("hierarchical Bestdori baseline requires protocol-v2")
                 value = bestdori_recalibrated(task, _walkforward_bestdori_rate(public, task))
+            elif model == "multitier-analog-ensemble":
+                value, row["quantiles"], row["ensemble"] = multitier_analog_ensemble(public, task)
             row["prediction"] = value
             if model == "linear24-quantiles":
                 residuals = _walkforward_residuals(public, task) if v2 else public["calibration"]["residuals"][scale_key(task)]
@@ -570,6 +572,108 @@ def predict(public: dict, model: str = "linear24") -> dict:
             "model_version": VERSION,
             "provenance": "walk_forward_raw_history" if v2 else "offline_coarse_recompute_not_platform_archive",
             "predictions": predictions}
+
+
+
+def _point_at_or_before(history: list[dict], when: int) -> dict | None:
+    candidates = [p for p in history if p["time"] <= when]
+    return max(candidates, key=lambda p: p["time"]) if candidates else None
+
+
+def _multitier_snapshot(tasks: dict[int, dict], tiers: list[int]) -> list[float]:
+    """Scale-free current-event features shared across ranking tiers."""
+    current = []
+    features = []
+    for tier in tiers:
+        task = tasks[tier]
+        last = task["history"][-1]
+        current.append(last["ep"])
+        for hours in (6, 12, 24):
+            old = _point_at_or_before(task["history"], task["issued_at"] - hours * HOUR)
+            if old is None:
+                raise ValueError(f"missing T-{hours}h analog feature for tier {tier}")
+            features.append((last["ep"] - old["ep"]) / max(last["ep"], 1.0))
+    for a, b in zip(current, current[1:]):
+        features.append(math.log((a + 1.0) / (b + 1.0)))
+    return features
+
+
+def _robust_feature_scales(rows: list[list[float]]) -> list[float]:
+    columns = list(zip(*rows))
+    scales = []
+    for col in columns:
+        center = st.median(col)
+        mad = st.median(abs(x - center) for x in col)
+        scales.append(max(1.4826 * mad, 1e-4))
+    return scales
+
+
+def _weighted_quantile(values: list[float], weights: list[float], q: float) -> float:
+    if not values or len(values) != len(weights) or not 0 <= q <= 1:
+        raise ValueError("invalid weighted quantile")
+    pairs = sorted(zip(values, weights), key=lambda x: x[0])
+    total = sum(max(w, 0.0) for _, w in pairs)
+    if total <= 0:
+        raise ValueError("nonpositive ensemble weight")
+    threshold = q * total
+    running = 0.0
+    for value, weight in pairs:
+        running += max(weight, 0.0)
+        if running >= threshold:
+            return value
+    return pairs[-1][0]
+
+
+def multitier_analog_ensemble(public: dict, task: dict) -> tuple[float, dict[str, float], dict]:
+    """Causal analog ensemble using multi-tier growth shape, not future/current truth."""
+    if public["protocol"]["schema"] != "bandoribench-protocol-v2":
+        raise ValueError("multitier analog ensemble requires protocol-v2")
+    tiers = list(public["protocol"]["requested_tiers"])
+    task_index = {(t["event_id"], t["horizon_hours"], t["tier"]): t for t in public["tasks"]}
+    siblings = {}
+    for tier in tiers:
+        sibling = task_index.get((task["event_id"], task["horizon_hours"], tier))
+        if sibling is None:
+            raise ValueError(f"missing current sibling tier {tier}")
+        siblings[tier] = sibling
+    current_features = _multitier_snapshot(siblings, tiers)
+    analogs = []
+    for e in _walkforward_events(public, task):
+        hist_tasks = {}
+        try:
+            for tier in tiers:
+                hist_tasks[tier] = make_raw_task(e, str(tier), task["horizon_hours"], public["protocol"])
+            features = _multitier_snapshot(hist_tasks, tiers)
+        except (KeyError, ValueError):
+            continue
+        target_hist = hist_tasks[task["tier"]]
+        current_ep = siblings[task["tier"]]["history"][-1]["ep"]
+        progress = target_hist["history"][-1]["ep"] / e["tiers"][str(task["tier"])]["label"]["ep"]
+        if not 0 < progress <= 1:
+            continue
+        candidate = max(current_ep, current_ep / progress)
+        analogs.append((e["event_id"], features, candidate))
+    if len(analogs) < 5:
+        raise ValueError("fewer than 5 usable multi-tier analog events")
+    scales = _robust_feature_scales([a[1] for a in analogs])
+    ranked = []
+    for event_id, features, candidate in analogs:
+        distance = math.sqrt(sum(((a - b) / s) ** 2
+                                 for a, b, s in zip(current_features, features, scales))
+                             / len(scales))
+        ranked.append((distance, event_id, candidate))
+    ranked.sort()
+    k = min(len(ranked), max(8, round(math.sqrt(len(ranked)) * 2)))
+    selected = ranked[:k]
+    distances = [r[0] for r in selected]
+    local_scale = st.median(distances) if any(d > 0 for d in distances) else 1.0
+    weights = [math.exp(-d / max(local_scale, 1e-6)) for d in distances]
+    values = [r[2] for r in selected]
+    quantiles = {str(q): _weighted_quantile(values, weights, q) for q in QUANTILES}
+    point = quantiles["0.5"]
+    meta = {"analog_count": k, "nearest_event_ids": [r[1] for r in selected],
+            "nearest_distances": distances}
+    return point, quantiles, meta
 
 
 def weighted_interval_score(quantiles: dict, y: float) -> float:
@@ -929,7 +1033,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("tasks")
     p.add_argument("--model", choices=("linear24", "persistence", "calibrated-linear24",
                                       "linear24-quantiles", "bestdori-recalibrated",
-                                      "bestdori-hierarchical"), default="linear24")
+                                      "bestdori-hierarchical", "multitier-analog-ensemble"), default="linear24")
     p.add_argument("--out", required=True)
     s = commands.add_parser("score", help="score an external or bundled submission")
     s.add_argument("benchmark")

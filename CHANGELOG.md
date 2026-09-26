@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Add `multitier-analog-ensemble`, a causal protocol-v2 model using T100/T1000/T2000 recent growth fractions and cross-tier ratios to retrieve historical analog events.
+- Convert historical analog completion fractions into a weighted ensemble of terminal-cutoff candidates; emit both median point forecasts and q05/q10/q25/q50/q75/q90/q95.
+- Add causality and full-coverage regression tests for the new ensemble.
+
 ## 0.2.0
 
 - Add protocol v2 walk-forward hindcasting with a configurable warm-up period and expanding historical context for every later event.
