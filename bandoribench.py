@@ -16,7 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 HOUR = 3_600_000
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
@@ -84,6 +84,10 @@ def normalize_points(rows: list[dict]) -> list[dict]:
         raise ValueError("cutoffs must be an array")
     by_time: dict[int, dict] = {}
     for row in rows:
+        if row is None:
+            continue
+        if not isinstance(row, dict):
+            raise ValueError("cutoff rows must be objects or null")
         t = integer(row["time"], "observation time")
         ep = number(row["ep"], "PT")
         final = row.get("isFinal", False)
@@ -130,8 +134,8 @@ def validate_dataset(data: dict) -> list[dict]:
             label = dict(s["label"])
             label["ep"] = number(label["ep"], "final PT", 1)
             label["time"] = integer(label["time"], "label time", e["end_at"])
-            if label.get("quality") not in ("explicit_final", "verified", "synthetic"):
-                raise ValueError("terminal labels require explicit_final / verified / synthetic")
+            if label.get("quality") not in ("explicit_final", "post_aggregate_observation", "verified", "synthetic"):
+                raise ValueError("terminal labels require explicit_final / post_aggregate_observation / verified / synthetic")
             if not label.get("evidence"):
                 raise ValueError("label evidence is required")
             if label["quality"] == "synthetic" and not data.get("synthetic", False):
@@ -523,14 +527,23 @@ def collect(args: argparse.Namespace) -> None:
                 meta = client.get(f"https://bestdori.com/api/events/{eid}.json")
                 override = windows.get(f"{args.server}:{eid}")
                 start = integer(override["start_at"], "override start") if override else server_value(meta, "startAt", args.server)
-                stop = integer(override["end_at"], "override stop") if override else server_value(meta, "aggregateAt", args.server)
-                if stop >= int(time.time() * 1000) - args.settle_hours * HOUR:
+                stop = integer(override["end_at"], "override stop") if override else server_value(meta, "endAt", args.server)
+                aggregate_end = (
+                    integer(override["aggregate_end_at"], "override aggregate_end_at")
+                    if override and override.get("aggregate_end_at") is not None
+                    else server_value(meta, "aggregateEndAt", args.server)
+                )
+                if aggregate_end < stop:
+                    raise ValueError("aggregateEndAt predates endAt")
+                if aggregate_end >= int(time.time() * 1000) - args.settle_hours * HOUR:
                     continue
                 attempted += 1
                 era = cn_era(eid, start, transition) if args.server == "cn" else "unspecified"
                 e = {"server": args.server, "event_id": eid, "start_at": start, "end_at": stop,
+                     "aggregate_end_at": aggregate_end,
                      "event_type": meta.get("eventType", "unknown"), "era": era, "tiers": {},
-                     "window_source": "manual_override" if override else "bestdori.aggregateAt",
+                     "window_source": "manual_override" if override else "bestdori.endAt",
+                     "aggregate_window_source": "manual_override" if override and override.get("aggregate_end_at") is not None else "bestdori.aggregateEndAt",
                      "reward_rule_source": "user_supplied_2026-09-26" if args.server == "cn" else "not_classified"}
                 for tier in args.tiers:
                     key = f"{args.server}:{eid}:{tier}"
@@ -544,14 +557,25 @@ def collect(args: argparse.Namespace) -> None:
                         if not points:
                             raise ValueError("empty history")
                         finals = [p for p in points if p["isFinal"] and p["time"] >= stop]
+                        post_aggregate = [p for p in points if p["time"] >= aggregate_end]
                         label = labels.get(key)
                         if label is None and finals:
                             if len({p["ep"] for p in finals}) != 1:
                                 raise ValueError("conflicting provider final labels")
                             label = {"ep": finals[-1]["ep"], "time": finals[-1]["time"], "quality": "explicit_final", "evidence": url}
+                        if label is None and post_aggregate:
+                            terminal = post_aggregate[-1]
+                            label = {
+                                "ep": terminal["ep"],
+                                "time": terminal["time"],
+                                "quality": "post_aggregate_observation",
+                                "evidence": f"{url}; cutoff observed at/after aggregateEndAt={aggregate_end}",
+                            }
                         gaps = [(b["time"] - a["time"]) / HOUR for a, b in zip(points, points[1:])]
                         quality = {"key": key, "points": len(points), "median_gap_hours": st.median(gaps) if gaps else None,
-                                   "max_gap_hours": max(gaps) if gaps else None, "has_label": label is not None}
+                                   "max_gap_hours": max(gaps) if gaps else None, "has_label": label is not None,
+                                   "post_aggregate_points": len(post_aggregate),
+                                   "last_observation_time": points[-1]["time"]}
                         audit.append(quality)
                         if label is not None:
                             e["tiers"][str(tier)] = {"points": points, "label": label, "source": url}

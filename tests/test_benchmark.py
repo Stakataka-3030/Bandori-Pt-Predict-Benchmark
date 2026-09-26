@@ -154,6 +154,8 @@ class BenchmarkTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 b.normalize_points(points)
         self.assertEqual(len(b.normalize_points([{"time": 1, "ep": 10}] * 2)), 1)
+        self.assertEqual(b.normalize_points([None, {"time": 1, "ep": 10}]),
+                         [{"time": 1, "ep": 10.0, "isFinal": False}])
 
     def test_final_label_conflict_rejected(self):
         data = copy.deepcopy(self.data)
@@ -286,9 +288,12 @@ class BenchmarkTests(unittest.TestCase):
         # No external request is made. The API body is deliberately synthetic.
         start = 1_600_000_000_000
         stop = start + 168 * b.HOUR
+        aggregate_end = stop + b.HOUR
         index = {"1": {"startAt": [str(start)]}}
-        detail = {"startAt": [str(start)], "aggregateAt": [str(stop)], "eventType": "test"}
-        points = [{"time": start + h * b.HOUR, "ep": h * 100, "isFinal": h == 168} for h in range(0, 169, 6)]
+        detail = {"startAt": [str(start)], "endAt": [str(stop)],
+                  "aggregateEndAt": [str(aggregate_end)], "eventType": "test"}
+        points = [{"time": start + h * b.HOUR, "ep": h * 100} for h in range(0, 169, 6)]
+        points.append({"time": aggregate_end, "ep": 16800})
         def fake_get(client, url):
             if "all.3.json" in url:
                 return index
@@ -299,7 +304,30 @@ class BenchmarkTests(unittest.TestCase):
             self.assertEqual(b.main(["collect", "--recent", "1", "--tiers", "1000", "--out", tmp]), 0)
             data = b.load(Path(tmp) / "dataset.json")
             self.assertEqual(len(b.validate_dataset(data)), 1)
-            self.assertEqual(data["events"][0]["tiers"]["1000"]["label"]["quality"], "explicit_final")
+            event = data["events"][0]
+            self.assertEqual(event["end_at"], stop)
+            self.assertEqual(event["aggregate_end_at"], aggregate_end)
+            self.assertEqual(event["tiers"]["1000"]["label"]["quality"], "post_aggregate_observation")
+
+    def test_collector_does_not_guess_pre_aggregate_last_observation(self):
+        start = 1_600_000_000_000
+        stop = start + 168 * b.HOUR
+        aggregate_end = stop + b.HOUR
+        index = {"1": {"startAt": [str(start)]}}
+        detail = {"startAt": [str(start)], "endAt": [str(stop)],
+                  "aggregateEndAt": [str(aggregate_end)], "eventType": "test"}
+        points = [{"time": start + h * b.HOUR, "ep": h * 100} for h in range(0, 169, 6)]
+        def fake_get(client, url):
+            if "all.3.json" in url:
+                return index
+            if "/events/1.json" in url:
+                return detail
+            return {"result": True, "cutoffs": points}
+        with tempfile.TemporaryDirectory() as tmp, patch.object(b.PublicClient, "get", fake_get):
+            self.assertEqual(b.main(["collect", "--recent", "1", "--tiers", "1000", "--out", tmp]), 0)
+            data = b.load(Path(tmp) / "dataset.json")
+            self.assertEqual(len(data["events"]), 1)
+            self.assertEqual(data["events"][0]["tiers"], {})
 
     def test_version_markers_match(self):
         import tomllib

@@ -7,7 +7,7 @@
 - Bestdori 档线：`https://bestdori.com/api/tracker/data?server={0|1|2|3}&event={event_id}&tier={tier}`
 - HHWX 档线：`https://hhwx.org/api/bandori/tracker/data?server={0|1|2|3}&event={event_id}&type=event&tier={tier}`
 
-服务器依次为 JP/EN/TW/CN。以上接口取自公开实现，不是游戏官方 API 承诺。开发环境直接请求未成功，不能根据这里的代码宣称已实测全历史覆盖或数据频率。
+服务器依次为 JP/EN/TW/CN。以上接口取自公开实现，不是游戏官方 API 承诺。用户侧首次真实采集已确认 Bestdori 请求可达，并暴露、修复了 v0.1.1 的时间字段错误；仍不能据此宣称已实测全历史覆盖或数据频率。
 
 已查阅的公开契约：
 
@@ -53,10 +53,10 @@
 }
 ```
 
-仅为结构例子；不能直接当真实数据或充分样本运行。所有时间均为 Unix 毫秒。`end_at` 专指**停止累计 PT 的时刻**，不指活动页面撤下或领奖截止。采集器的默认映射为 `aggregateAt`，必须在目标服确认。窗口覆盖文件示例：
+仅为结构例子；不能直接当真实数据或充分样本运行。所有时间均为 Unix 毫秒。`end_at` 专指**停止累计 PT 的时刻**，不指活动页面撤下或领奖截止。Bestdori 默认映射为 `endAt`。另外保存 `aggregate_end_at`，默认来自 `aggregateEndAt`（结果汇总结束时间）；它不是模型预测目标，只用于更严格地锚定结算后的终值观测。窗口覆盖文件示例：
 
 ```json
-{"jp:123":{"start_at":1600000000000,"end_at":1600604800000}}
+{"jp:123":{"start_at":1600000000000,"end_at":1600604800000,"aggregate_end_at":1600608400000}}
 ```
 
 用 `collect --windows windows.json` 提供。历史档案若不能还原延期发生的时间，就不是无偏的实时回放；此类活动应在冻结前单独审查。
@@ -66,10 +66,11 @@
 可信终值标签只接受：
 
 - `explicit_final`：源记录有 `isFinal=true`，且时间不早于停止累计 PT；它是提供方标记，不自动等于独立游戏结算核验。
+- `post_aggregate_observation`：历史 tracker 没有 explicit final 标志，但存在时间达到或晚于 `aggregateEndAt` 的档线观测；采用最后一条这样的观测，并保留 URL 与时间证据。这是“结算后观测”标签，不冒充独立官方核验。
 - `verified`：人工/其他可靠来源核验，并写明 evidence。
 - `synthetic`：仅限显式标记 synthetic 的测试数据。
 
-普通最后一条记录不能自动升级为 final。采集器得到原始序列但没有可信标签时仍保存原始响应与覆盖审计，只是不将该序列作为有真值的题目。可提供标签文件：
+普通最后一条记录不能自动升级为 final；**仅仅晚于 `endAt` 也不够，自动标签要求达到 `aggregateEndAt`。**采集器得到原始序列但没有可信标签时仍保存原始响应与覆盖审计，只是不将该序列作为有真值的题目。可提供标签文件：
 
 ```json
 {"jp:123:1000":{"ep":2345678,"time":1600604800000,"quality":"verified","evidence":"REPLACE_WITH_REAL_SETTLEMENT_SOURCE"}}
