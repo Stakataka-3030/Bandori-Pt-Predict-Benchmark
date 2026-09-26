@@ -1,10 +1,10 @@
 # Bandori PT Predict Benchmark
 
-**v0.1.3 · 可执行评分器，不是“平均相对误差”报表。**
+**v0.1.4 · 可执行评分器，不是“平均相对误差”报表。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
-> 当前状态：评分器、粗粒度回放、公开接口采集器、四个基线和离线测试已实现。**尚无冻结发布的真实活动 benchmark 数据版本，也没有平台准确度排行榜。** demo 全部为合成数据，不能作为 Bestdori / HHWX / MYCX 的准确度证据。v0.1.3 使用 Bestdori 活动归档 `cutoff` 作为首选终值来源，避免从 tracker 末尾时间猜最终档线。
+> 当前状态：评分器、粗粒度回放、公开接口采集器、四个基线和离线测试已实现。**尚无冻结发布的真实活动 benchmark 数据版本，也没有平台准确度排行榜。** demo 全部为合成数据，不能作为 Bestdori / HHWX / MYCX 的准确度证据。真实 JP 采集已确认近 30 场 tracker 基本完整、约半小时一条，而 Bestdori archive 仅覆盖较早活动；v0.1.4 因此加入基于 `endAt` 的收官终值锚定。
 
 ## 立即运行
 
@@ -59,7 +59,7 @@ python bandoribench.py predict runs/jp-v1/public/tasks.json --model linear24 --o
 python bandoribench.py score runs/jp-v1/private/benchmark.json runs/jp-linear24.json --out runs/jp-linear24-report.json
 ```
 
-**第一条命令会优先从 Bestdori `api/archives/all.5.json` 的 `cutoff[server][tier]` 读取归档最终档线，并标记为 `archive_final`。** 若归档缺该活动/档位，再依次尝试源记录 `isFinal`、`aggregateEndAt` 之后的 tracker 观测；仍无终值时才需要 `--labels verified-labels.json`。格式见 [数据协议](docs/DATA.md)。尚无合格标签时，`freeze` 会拒绝制造成绩。
+**终值优先使用 Bestdori `api/archives/all.5.json` 的 `cutoff[server][tier]`（`archive_final`）。** 对归档尚未覆盖的新活动，若 tracker 在 `endAt` 到 `aggregateEndAt` 之间存在收官观测，且这些观测的 PT 完全一致，则自动标记为 `post_end_final`。若多条收官观测互相矛盾，则不猜终值；再尝试明确的 `isFinal` / 稳定的 `aggregateEndAt` 后观测，最后才需要 `--labels verified-labels.json`。
 
 `--source hhwx` 可切换档线来源；元数据仍显式来自 Bestdori，并记录来源，不做无痕自动回退。**预测目标时刻使用 Bestdori `endAt`（活动终止 / PT 停止），`aggregateEndAt` 只用于判断结算后的档线观测能否作为自动终值标签。** 两者分别保存，不能混为一个字段。可用 `--windows` 提供核验后的 `start_at` / `end_at`，以及可选的 `aggregate_end_at` 覆盖。
 
@@ -93,7 +93,7 @@ python bandoribench.py collect --server cn --source hhwx --recent 30 --tiers 500
 - 不接受错误 benchmark ID、重复/陌生 case、非有限或负预测；概率赛道要求完整、单调的七个分位数。
 - 一个必测 case 缺交或无效，就输出 `score: null` 和失败清单，不按剩余简单题算正式分数。
 - 各活动等权、提前量分层，不让高频采样占据额外权重；置信区间按整场活动重采样，不把采样点当独立活动。
-- 软件测试包含未来数据扰动、终值隔离、冻结校验、国服时间乱序、奖励边界、Bestdori 实际时间字段、结算后终值锚定、缺失记录、WIS 及端到端运行。
+- 软件测试包含未来数据扰动、终值隔离、冻结校验、国服时间乱序、奖励边界、Bestdori 实际时间字段、`endAt` 收官终值锚定、收官观测冲突拒绝、缺失记录、WIS 及端到端运行。
 
 **边界**：当前是可信运行环境下的离线回放工具，不是对抗性防作弊平台。公开任务集合中包含同一活动的多个时点；它没有操作系统沙箱，不能阻止恶意参赛者偷看其他任务、联网查询已结束活动或读取裁判目录。正式盲测必须逐任务隔离，并在未来活动中封存输入及预测发布时间。历史记录若没有 `available_at`，只标为 `observed_at_only`，不宣称重现当时接口延迟。
 

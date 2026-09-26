@@ -290,10 +290,11 @@ class BenchmarkTests(unittest.TestCase):
         stop = start + 168 * b.HOUR
         aggregate_end = stop + b.HOUR
         index = {"1": {"startAt": [str(start)]}}
-        archives = {"1": {"cutoff": [{"1000": 16800}, {}, {}, {}, {}], "board": [[], [], [], [], []]}}
+        archives = {"1": {"cutoff": [{}, {}, {}, {}, {}], "board": [[], [], [], [], []]}}
         detail = {"startAt": [str(start)], "endAt": [str(stop)],
                   "aggregateEndAt": [str(aggregate_end)], "eventType": "test"}
         points = [{"time": start + h * b.HOUR, "ep": h * 100} for h in range(0, 169, 6)]
+        points.append({"time": stop + 60_000, "ep": 16800})
         def fake_get(client, url):
             if "events/all.3.json" in url:
                 return index
@@ -309,7 +310,7 @@ class BenchmarkTests(unittest.TestCase):
             event = data["events"][0]
             self.assertEqual(event["end_at"], stop)
             self.assertEqual(event["aggregate_end_at"], aggregate_end)
-            self.assertEqual(event["tiers"]["1000"]["label"]["quality"], "archive_final")
+            self.assertEqual(event["tiers"]["1000"]["label"]["quality"], "post_end_final")
             self.assertEqual(event["tiers"]["1000"]["label"]["ep"], 16800)
 
     def test_archive_cutoff_reader(self):
@@ -317,6 +318,54 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(b.archive_cutoff(archives, 7, "jp", 1000), 456)
         self.assertIsNone(b.archive_cutoff(archives, 8, "jp", 1000))
         self.assertIsNone(b.archive_cutoff(archives, 7, "cn", 1000))
+
+    def test_collector_prefers_archive_final(self):
+        start = 1_600_000_000_000
+        stop = start + 168 * b.HOUR
+        aggregate_end = stop + b.HOUR
+        index = {"1": {"startAt": [str(start)]}}
+        archives = {"1": {"cutoff": [{"1000": 17000}, {}, {}, {}, {}], "board": [[], [], [], [], []]}}
+        detail = {"startAt": [str(start)], "endAt": [str(stop)],
+                  "aggregateEndAt": [str(aggregate_end)], "eventType": "test"}
+        points = [{"time": start + h * b.HOUR, "ep": h * 100} for h in range(0, 169, 6)]
+        points.append({"time": stop + 60_000, "ep": 16800})
+        def fake_get(client, url):
+            if "events/all.3.json" in url:
+                return index
+            if "archives/all.5.json" in url:
+                return archives
+            if "/events/1.json" in url:
+                return detail
+            return {"result": True, "cutoffs": points}
+        with tempfile.TemporaryDirectory() as tmp, patch.object(b.PublicClient, "get", fake_get):
+            self.assertEqual(b.main(["collect", "--recent", "1", "--tiers", "1000", "--out", tmp]), 0)
+            data = b.load(Path(tmp) / "dataset.json")
+            self.assertEqual(data["events"][0]["tiers"]["1000"]["label"]["quality"], "archive_final")
+            self.assertEqual(data["events"][0]["tiers"]["1000"]["label"]["ep"], 17000)
+
+    def test_collector_rejects_disagreeing_post_end_observations(self):
+        start = 1_600_000_000_000
+        stop = start + 168 * b.HOUR
+        aggregate_end = stop + b.HOUR
+        index = {"1": {"startAt": [str(start)]}}
+        archives = {"1": {"cutoff": [{}, {}, {}, {}, {}], "board": [[], [], [], [], []]}}
+        detail = {"startAt": [str(start)], "endAt": [str(stop)],
+                  "aggregateEndAt": [str(aggregate_end)], "eventType": "test"}
+        points = [{"time": start + h * b.HOUR, "ep": h * 100} for h in range(0, 169, 6)]
+        points += [{"time": stop + 60_000, "ep": 16800},
+                   {"time": stop + 30 * 60_000, "ep": 16900}]
+        def fake_get(client, url):
+            if "events/all.3.json" in url:
+                return index
+            if "archives/all.5.json" in url:
+                return archives
+            if "/events/1.json" in url:
+                return detail
+            return {"result": True, "cutoffs": points}
+        with tempfile.TemporaryDirectory() as tmp, patch.object(b.PublicClient, "get", fake_get):
+            self.assertEqual(b.main(["collect", "--recent", "1", "--tiers", "1000", "--out", tmp]), 0)
+            data = b.load(Path(tmp) / "dataset.json")
+            self.assertEqual(data["events"][0]["tiers"], {})
 
     def test_collector_does_not_guess_pre_aggregate_last_observation(self):
         start = 1_600_000_000_000

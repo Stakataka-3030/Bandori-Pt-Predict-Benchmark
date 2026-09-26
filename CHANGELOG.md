@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4
+
+- Add `post_end_final`: when archives are missing, stable tracker cutoff observation(s) between Bestdori `endAt` and `aggregateEndAt` may anchor the final cutoff.
+- Reject automatic terminal labeling when multiple post-end observations disagree instead of silently choosing one.
+- Expose archive availability, post-end point count, distinct values and lag-to-end in acquisition audit.
+- Record the real JP finding that recent tracker histories are roughly half-hourly while Bestdori archives do not cover recent event IDs.
+
 ## 0.1.3
 
 - Use Bestdori `/api/archives/all.5.json` archived `cutoff[server][tier]` as the primary final-cutoff label source.

@@ -16,7 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 HOUR = 3_600_000
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
@@ -134,8 +134,8 @@ def validate_dataset(data: dict) -> list[dict]:
             label = dict(s["label"])
             label["ep"] = number(label["ep"], "final PT", 1)
             label["time"] = integer(label["time"], "label time", e["end_at"])
-            if label.get("quality") not in ("archive_final", "explicit_final", "post_aggregate_observation", "verified", "synthetic"):
-                raise ValueError("terminal labels require archive_final / explicit_final / post_aggregate_observation / verified / synthetic")
+            if label.get("quality") not in ("archive_final", "explicit_final", "post_end_final", "post_aggregate_observation", "verified", "synthetic"):
+                raise ValueError("terminal labels require archive_final / explicit_final / post_end_final / post_aggregate_observation / verified / synthetic")
             if not label.get("evidence"):
                 raise ValueError("label evidence is required")
             if label["quality"] == "synthetic" and not data.get("synthetic", False):
@@ -575,6 +575,7 @@ def collect(args: argparse.Namespace) -> None:
                         if not points:
                             raise ValueError("empty history")
                         finals = [p for p in points if p["isFinal"] and p["time"] >= stop]
+                        post_end = [p for p in points if stop <= p["time"] <= aggregate_end]
                         post_aggregate = [p for p in points if p["time"] >= aggregate_end]
                         label = labels.get(key)
                         archived = archive_cutoff(archives, eid, args.server, tier)
@@ -593,17 +594,36 @@ def collect(args: argparse.Namespace) -> None:
                             if len({p["ep"] for p in finals}) != 1:
                                 raise ValueError("conflicting provider final labels")
                             label = {"ep": finals[-1]["ep"], "time": finals[-1]["time"], "quality": "explicit_final", "evidence": url}
+                        if label is None and post_end:
+                            terminal_values = {p["ep"] for p in post_end}
+                            if len(terminal_values) == 1:
+                                terminal = post_end[0]
+                                label = {
+                                    "ep": terminal["ep"],
+                                    "time": terminal["time"],
+                                    "quality": "post_end_final",
+                                    "evidence": (
+                                        f"{url}; stable cutoff observation(s) after endAt={stop} "
+                                        f"and no later than aggregateEndAt={aggregate_end}"
+                                    ),
+                                }
                         if label is None and post_aggregate:
-                            terminal = post_aggregate[-1]
-                            label = {
-                                "ep": terminal["ep"],
-                                "time": terminal["time"],
-                                "quality": "post_aggregate_observation",
-                                "evidence": f"{url}; cutoff observed at/after aggregateEndAt={aggregate_end}",
-                            }
+                            terminal_values = {p["ep"] for p in post_aggregate}
+                            if len(terminal_values) == 1:
+                                terminal = post_aggregate[0]
+                                label = {
+                                    "ep": terminal["ep"],
+                                    "time": terminal["time"],
+                                    "quality": "post_aggregate_observation",
+                                    "evidence": f"{url}; stable cutoff observed at/after aggregateEndAt={aggregate_end}",
+                                }
                         gaps = [(b["time"] - a["time"]) / HOUR for a, b in zip(points, points[1:])]
                         quality = {"key": key, "points": len(points), "median_gap_hours": st.median(gaps) if gaps else None,
                                    "max_gap_hours": max(gaps) if gaps else None, "has_label": label is not None,
+                                   "archive_label": archived is not None,
+                                   "post_end_points": len(post_end),
+                                   "post_end_distinct_values": len({p["ep"] for p in post_end}),
+                                   "post_end_lag_minutes": (post_end[0]["time"] - stop) / 60_000 if post_end else None,
                                    "post_aggregate_points": len(post_aggregate),
                                    "last_observation_time": points[-1]["time"]}
                         audit.append(quality)

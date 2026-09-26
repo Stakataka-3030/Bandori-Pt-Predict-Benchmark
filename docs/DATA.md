@@ -68,11 +68,12 @@
 
 - `archive_final`：Bestdori 活动归档 `cutoff[server][tier]` 直接给出的最终档线。归档条目没有单独时间戳，因此标签时间使用该活动的 `aggregateEndAt` 作为结算锚点，并保留归档 URL、活动、区服、档位证据。
 - `explicit_final`：源记录有 `isFinal=true`，且时间不早于停止累计 PT；它是提供方标记，不自动等于独立游戏结算核验。
-- `post_aggregate_observation`：历史 tracker 没有 explicit final 标志，但存在时间达到或晚于 `aggregateEndAt` 的档线观测；采用最后一条这样的观测，并保留 URL 与时间证据。这是“结算后观测”标签，不冒充独立官方核验。
+- `post_end_final`：归档缺失时，tracker 在 `endAt` 到 `aggregateEndAt` 之间已有收官观测；只有这些观测的 PT 全部一致时才自动采用。单条观测也可用，因为其时间已经不早于活动终止；若该窗口内出现两个不同 PT，则拒绝自动标签并进入审计。
+- `post_aggregate_observation`：历史 tracker 没有 explicit final 标志，但存在时间达到或晚于 `aggregateEndAt` 的稳定档线观测；保留 URL 与时间证据。这是“结算后观测”标签，不冒充独立官方核验。
 - `verified`：人工/其他可靠来源核验，并写明 evidence。
 - `synthetic`：仅限显式标记 synthetic 的测试数据。
 
-普通最后一条记录不能自动升级为 final；**仅仅晚于 `endAt` 也不够，自动标签要求达到 `aggregateEndAt`。**采集器得到原始序列但没有可信标签时仍保存原始响应与覆盖审计，只是不将该序列作为有真值的题目。可提供标签文件：
+普通最后一条记录不能仅凭“它是最后一条”升级为 final；但若它明确落在 `endAt <= time <= aggregateEndAt` 的收官窗口，并且窗口内所有观测 PT 一致，则可标记为 `post_end_final`。采集器得到原始序列但没有可信标签时仍保存原始响应与覆盖审计，只是不将该序列作为有真值的题目。可提供标签文件：
 
 ```json
 {"jp:123:1000":{"ep":2345678,"time":1600604800000,"quality":"verified","evidence":"REPLACE_WITH_REAL_SETTLEMENT_SOURCE"}}
