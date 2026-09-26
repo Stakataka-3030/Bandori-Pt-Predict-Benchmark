@@ -13,15 +13,18 @@ import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.2.3"
+VERSION = "0.3.0"
 HOUR = 3_600_000
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
          2000, 3000, 4000, 5000, 10000, 20000, 30000, 40000, 50000, 70000, 100000)
 SERVERS = {"jp": 0, "en": 1, "tw": 2, "cn": 3}
+SERVER_UTC_OFFSETS = {"jp": 9.0, "en": 0.0, "tw": 8.0, "cn": 8.0}
+CALENDAR_DAY_TYPES = ("weekday", "weekend", "holiday", "makeup_workday")
 # User-supplied domain corrections, 2026-09-26; NOT verified official reward data.
 CN_OVERRIDES = {310: "voice500_1500", 311: "voice1000", 312: "voice1000", 313: "voice1000", 314: "voice500_1500"}
 CN_ORDER = ((312, 311), (313, 311), (311, 310), (310, 314))
@@ -78,6 +81,118 @@ def cn_era(event_id: int, start_at: int, transition_start: int | None) -> str:
         return "unknown"
     return "voice500_1500" if start_at >= transition_start else "voice1000"
 
+
+
+
+def validate_calendar(calendar: dict | None, server: str) -> dict | None:
+    """Validate/freeze public calendar facts known independently of event outcomes."""
+    if calendar is None:
+        return None
+    if not isinstance(calendar, dict) or calendar.get("schema") != "bandoribench-calendar-v1":
+        raise ValueError("calendar schema must be bandoribench-calendar-v1")
+    if calendar.get("server") != server:
+        raise ValueError("calendar server does not match benchmark server")
+    offset = number(calendar.get("utc_offset_hours", SERVER_UTC_OFFSETS[server]),
+                    "calendar utc_offset_hours", -12)
+    if offset > 14:
+        raise ValueError("calendar utc_offset_hours must be <=14")
+    days = calendar.get("days", {})
+    if not isinstance(days, dict):
+        raise ValueError("calendar days must be an object")
+    normalized = {}
+    for day, raw in days.items():
+        try:
+            datetime.strptime(day, "%Y-%m-%d")
+        except ValueError as exc:
+            raise ValueError(f"invalid calendar date: {day}") from exc
+        if isinstance(raw, str):
+            dtype, known_at = raw, None
+        elif isinstance(raw, dict):
+            dtype = raw.get("type")
+            known_at = raw.get("known_at")
+        else:
+            raise ValueError(f"invalid calendar entry for {day}")
+        if dtype not in CALENDAR_DAY_TYPES:
+            raise ValueError(f"invalid calendar day type for {day}")
+        entry = {"type": dtype}
+        if known_at is not None:
+            entry["known_at"] = integer(known_at, f"calendar {day} known_at")
+        normalized[day] = entry
+    return {"schema": "bandoribench-calendar-v1", "server": server,
+            "utc_offset_hours": float(offset), "days": dict(sorted(normalized.items()))}
+
+
+def _local_datetime(timestamp_ms: int, server: str, calendar: dict | None = None) -> datetime:
+    offset = (calendar or {}).get("utc_offset_hours", SERVER_UTC_OFFSETS[server])
+    return datetime.fromtimestamp(timestamp_ms / 1000, timezone.utc) + timedelta(hours=float(offset))
+
+
+def _calendar_day_type(timestamp_ms: int, server: str, calendar: dict | None,
+                       knowledge_at: int) -> str:
+    local = _local_datetime(timestamp_ms, server, calendar)
+    day = local.strftime("%Y-%m-%d")
+    entry = (calendar or {}).get("days", {}).get(day)
+    if isinstance(entry, dict):
+        known_at = entry.get("known_at")
+        if known_at is None or known_at <= knowledge_at:
+            return entry["type"]
+    return "weekend" if local.weekday() >= 5 else "weekday"
+
+
+def _calendar_window_fractions(task: dict, calendar: dict | None,
+                               start: int, end: int, prefix: str) -> dict[str, float]:
+    counts = {kind: 0.0 for kind in CALENDAR_DAY_TYPES}
+    total = max(0.0, (end - start) / HOUR)
+    if total <= 0:
+        return {f"{prefix}_{kind}_frac": 0.0 for kind in CALENDAR_DAY_TYPES}
+    cursor = start
+    while cursor < end:
+        nxt = min(end, cursor + HOUR)
+        midpoint = cursor + (nxt - cursor) // 2
+        kind = _calendar_day_type(midpoint, task["server"], calendar, task["issued_at"])
+        counts[kind] += (nxt - cursor) / HOUR
+        cursor = nxt
+    return {f"{prefix}_{kind}_frac": counts[kind] / total for kind in CALENDAR_DAY_TYPES}
+
+
+def calendar_feature_dict(task: dict, calendar: dict | None) -> dict[str, float]:
+    local = _local_datetime(task["issued_at"], task["server"], calendar)
+    current_kind = _calendar_day_type(task["issued_at"], task["server"], calendar, task["issued_at"])
+    hour = local.hour + local.minute / 60.0
+    weekday = local.weekday()
+    out = {
+        "cal_hour_sin": math.sin(2 * math.pi * hour / 24.0),
+        "cal_hour_cos": math.cos(2 * math.pi * hour / 24.0),
+        "cal_weekday_sin": math.sin(2 * math.pi * weekday / 7.0),
+        "cal_weekday_cos": math.cos(2 * math.pi * weekday / 7.0),
+    }
+    for kind in CALENDAR_DAY_TYPES:
+        out[f"cal_now_{kind}"] = 1.0 if current_kind == kind else 0.0
+    out.update(_calendar_window_fractions(task, calendar, task["issued_at"], task["end_at"], "cal_rem"))
+    out.update(_calendar_window_fractions(task, calendar, max(task["issued_at"], task["end_at"] - 24 * HOUR),
+                                          task["end_at"], "cal_last24"))
+    out.update(_calendar_window_fractions(task, calendar, max(task["issued_at"], task["end_at"] - 6 * HOUR),
+                                          task["end_at"], "cal_last6"))
+    return out
+
+
+def reward_feature_dict(task: dict) -> dict[str, float]:
+    tier = float(task["tier"])
+    boundaries: list[float] = []
+    if task["server"] == "cn":
+        if task.get("era") == "voice1000":
+            boundaries = [1000.0]
+        elif task.get("era") == "voice500_1500":
+            boundaries = [500.0, 1500.0]
+    out = {"rank_log": math.log(max(tier, 1.0)), "reward_known": float(bool(boundaries)),
+           "reward_boundary": float(tier in boundaries), "reward_between": 0.0,
+           "reward_log_distance": 0.0}
+    if boundaries:
+        out["reward_log_distance"] = min(abs(math.log(tier / b)) for b in boundaries)
+        if len(boundaries) == 2:
+            lo, hi = sorted(boundaries)
+            out["reward_between"] = float(lo < tier < hi)
+    return out
 
 def normalize_points(rows: list[dict]) -> list[dict]:
     if not isinstance(rows, list):
@@ -370,11 +485,13 @@ def freeze(data: dict, n_calibration: int = 10, horizons: tuple[int, ...] = (72,
 
 def freeze_walkforward(data: dict, warmup_events: int = 12,
                        horizons: tuple[int, ...] = (72, 48, 24, 12, 6),
-                       stale_hours: int = 3) -> dict:
+                       stale_hours: int = 3, calendar: dict | None = None) -> dict:
     """Protocol v2: raw tracker prefixes with expanding historical context."""
     events = validate_dataset(data)
     if len({e["server"] for e in events}) != 1:
         raise ValueError("freeze one server per benchmark; compare servers separately")
+    server = events[0]["server"]
+    calendar = validate_calendar(calendar, server)
     requested_tiers = [int(t) for t in data.get("requested_tiers", [])]
     if not requested_tiers or len(set(requested_tiers)) != len(requested_tiers) or any(t not in TIERS for t in requested_tiers):
         raise ValueError("walk-forward datasets require valid requested_tiers")
@@ -413,6 +530,7 @@ def freeze_walkforward(data: dict, warmup_events: int = 12,
         "input_policy": "all raw tracker observations visible by issued_at",
         "history_policy": "models may fit only events listed in history_event_ids",
         "dataset_sha256": digest(data),
+        "calendar_sha256": digest(calendar) if calendar is not None else None,
     }
     errors, finals = defaultdict(list), defaultdict(list)
     exclusions, tasks, truth = [], [], {}
@@ -460,6 +578,8 @@ def freeze_walkforward(data: dict, warmup_events: int = 12,
         "reference_events": events,
         "exclusions": exclusions,
     }
+    if calendar is not None:
+        body["calendar"] = calendar
     body["benchmark_id"] = digest(body)
     return body
 
@@ -477,6 +597,8 @@ def public_bundle(bundle: dict) -> dict:
         keys.append("calibration")
     else:
         keys.append("reference_events")
+        if "calendar" in bundle:
+            keys.append("calendar")
     return {k: bundle[k] for k in keys}
 
 
@@ -530,11 +652,12 @@ def _walkforward_bestdori_rate(public: dict, task: dict, shrink_k: float = 3.0) 
 def predict(public: dict, model: str = "linear24") -> dict:
     models = ("linear24", "persistence", "calibrated-linear24", "linear24-quantiles",
               "bestdori-recalibrated", "bestdori-hierarchical", "multitier-analog-ensemble",
-              "hhwx-instant", "hhwx-24h", "rinko-dpra-replay")
+              "hhwx-instant", "hhwx-24h", "rinko-dpra-replay", "care-s")
     if model not in models:
         raise ValueError("unknown baseline")
     v2 = public["protocol"]["schema"] == "bandoribench-protocol-v2"
     predictions = []
+    care_cache = {}
     for task in public["tasks"]:
         row = {"case_id": task["case_id"]}
         try:
@@ -571,6 +694,8 @@ def predict(public: dict, model: str = "linear24") -> dict:
                 if not v2:
                     raise ValueError("Rinko/DPRA replay requires protocol-v2 raw history")
                 value = rinko_dpra_replay(task)
+            elif model == "care-s":
+                value, row["quantiles"], row["care"] = care_s_forecast(public, task, care_cache)
             row["prediction"] = value
             if model == "linear24-quantiles":
                 residuals = _walkforward_residuals(public, task) if v2 else public["calibration"]["residuals"][scale_key(task)]
@@ -581,9 +706,13 @@ def predict(public: dict, model: str = "linear24") -> dict:
         except (ValueError, KeyError) as exc:
             row["error"] = str(exc)
         predictions.append(row)
+    if model == "care-s":
+        _enforce_care_tier_order(public, predictions)
     return {"benchmark_id": public["benchmark_id"], "model_id": model,
             "model_version": VERSION,
-            "provenance": "walk_forward_raw_history" if v2 else "offline_coarse_recompute_not_platform_archive",
+            "provenance": ("care_s_causal_walk_forward" if model == "care-s"
+                           else "walk_forward_raw_history" if v2
+                           else "offline_coarse_recompute_not_platform_archive"),
             "predictions": predictions}
 
 
@@ -750,8 +879,7 @@ def _weighted_quantile(values: list[float], weights: list[float], q: float) -> f
     return pairs[-1][0]
 
 
-def multitier_analog_ensemble(public: dict, task: dict) -> tuple[float, dict[str, float], dict]:
-    """Causal analog ensemble using multi-tier growth shape, not future/current truth."""
+def _multitier_analog_components(public: dict, task: dict) -> tuple[list[float], list[float], dict]:
     if public["protocol"]["schema"] != "bandoribench-protocol-v2":
         raise ValueError("multitier analog ensemble requires protocol-v2")
     tiers = list(public["protocol"]["requested_tiers"])
@@ -795,12 +923,270 @@ def multitier_analog_ensemble(public: dict, task: dict) -> tuple[float, dict[str
     local_scale = st.median(distances) if any(d > 0 for d in distances) else 1.0
     weights = [math.exp(-d / max(local_scale, 1e-6)) for d in distances]
     values = [r[2] for r in selected]
-    quantiles = {str(q): _weighted_quantile(values, weights, q) for q in QUANTILES}
-    point = quantiles["0.5"]
     meta = {"analog_count": k, "nearest_event_ids": [r[1] for r in selected],
-            "nearest_distances": distances}
-    return point, quantiles, meta
+            "nearest_distances": distances, "candidate_values": values}
+    return values, weights, meta
 
+
+def multitier_analog_ensemble(public: dict, task: dict) -> tuple[float, dict[str, float], dict]:
+    """Causal analog ensemble using multi-tier growth shape, not future/current truth."""
+    values, weights, meta = _multitier_analog_components(public, task)
+    quantiles = {str(q): _weighted_quantile(values, weights, q) for q in QUANTILES}
+    return quantiles["0.5"], quantiles, meta
+
+
+
+
+def _care_sibling_tasks(public: dict, task: dict) -> dict[int, dict]:
+    tiers = list(public["protocol"]["requested_tiers"])
+    index = {(t["event_id"], t["horizon_hours"], t["tier"]): t for t in public["tasks"]}
+    siblings = {}
+    for tier in tiers:
+        sibling = index.get((task["event_id"], task["horizon_hours"], tier))
+        if sibling is None:
+            raise ValueError(f"CARE-S missing sibling tier {tier}")
+        siblings[tier] = sibling
+    return siblings
+
+
+def care_feature_dict(public: dict, task: dict, analog_meta: dict) -> dict[str, float]:
+    siblings = _care_sibling_tasks(public, task)
+    tiers = list(public["protocol"]["requested_tiers"])
+    own = siblings[task["tier"]]
+    last = own["history"][-1]
+    duration = max(own["end_at"] - own["start_at"], 1)
+    features = {
+        "elapsed_frac": (own["issued_at"] - own["start_at"]) / duration,
+        "remaining_frac": (own["end_at"] - own["issued_at"]) / duration,
+        "input_age_hours": (own["issued_at"] - own["input_cutoff_at"]) / HOUR,
+        "log_current_ep": math.log1p(last["ep"]),
+        "log_duration_hours": math.log1p(duration / HOUR),
+        f"event_type:{own['event_type']}": 1.0,
+        f"era:{own['era']}": 1.0,
+    }
+    own_growth = {}
+    for hours in (6, 12, 24):
+        old = _point_at_or_before(own["history"], own["issued_at"] - hours * HOUR)
+        if old is None:
+            raise ValueError(f"CARE-S missing T-{hours}h feature")
+        frac = (last["ep"] - old["ep"]) / max(last["ep"], 1.0)
+        own_growth[hours] = frac
+        features[f"own_growth_{hours}h"] = frac
+    features["own_accel_6_vs_24"] = own_growth[6] - own_growth[24] / 4.0
+    for i, value in enumerate(_multitier_snapshot(siblings, tiers)):
+        features[f"multitier_{i}"] = value
+    distances = analog_meta.get("nearest_distances", [])
+    candidates = analog_meta.get("candidate_values", [])
+    features["analog_count_log"] = math.log1p(float(analog_meta.get("analog_count", 0)))
+    features["analog_nearest_distance"] = min(distances) if distances else 0.0
+    features["analog_median_distance"] = st.median(distances) if distances else 0.0
+    if candidates:
+        med = max(st.median(candidates), 1.0)
+        features["analog_relative_spread"] = (max(candidates) - min(candidates)) / med
+    else:
+        features["analog_relative_spread"] = 0.0
+    features.update(reward_feature_dict(own))
+    features.update(calendar_feature_dict(own, public.get("calendar")))
+    return features
+
+
+def _solve_linear_system(matrix: list[list[float]], vector: list[float]) -> list[float]:
+    n = len(vector)
+    a = [list(row) + [vector[i]] for i, row in enumerate(matrix)]
+    for col in range(n):
+        pivot = max(range(col, n), key=lambda r: abs(a[r][col]))
+        if abs(a[pivot][col]) < 1e-12:
+            raise ValueError("singular ridge system")
+        a[col], a[pivot] = a[pivot], a[col]
+        scale = a[col][col]
+        a[col] = [v / scale for v in a[col]]
+        for row in range(n):
+            if row == col:
+                continue
+            factor = a[row][col]
+            if factor == 0:
+                continue
+            a[row] = [x - factor * y for x, y in zip(a[row], a[col])]
+    return [a[i][-1] for i in range(n)]
+
+
+def _ridge_fit(features: list[dict[str, float]], targets: list[float], l2: float = 4.0) -> dict:
+    if len(features) != len(targets) or not features:
+        raise ValueError("invalid CARE-S ridge sample")
+    keys = sorted({key for row in features for key in row})
+    means, scales = {}, {}
+    for key in keys:
+        values = [row.get(key, 0.0) for row in features]
+        means[key] = st.mean(values)
+        sigma = st.pstdev(values) if len(values) > 1 else 0.0
+        scales[key] = sigma if sigma > 1e-9 else 1.0
+    xrows = [[1.0] + [(row.get(key, 0.0) - means[key]) / scales[key] for key in keys]
+             for row in features]
+    width = len(keys) + 1
+    gram = [[0.0] * width for _ in range(width)]
+    rhs = [0.0] * width
+    for x, y in zip(xrows, targets):
+        for i in range(width):
+            rhs[i] += x[i] * y
+            for j in range(width):
+                gram[i][j] += x[i] * x[j]
+    for i in range(1, width):
+        gram[i][i] += l2
+    beta = _solve_linear_system(gram, rhs)
+    return {"keys": keys, "means": means, "scales": scales, "beta": beta}
+
+
+def _ridge_predict(model: dict, features: dict[str, float]) -> float:
+    x = [1.0] + [(features.get(key, 0.0) - model["means"][key]) / model["scales"][key]
+                 for key in model["keys"]]
+    return sum(a * b for a, b in zip(x, model["beta"]))
+
+
+def _care_historical_public(public: dict, event: dict, horizon: int,
+                            prior_ids: list[int]) -> tuple[dict, dict]:
+    tasks = []
+    target = None
+    for tier in public["protocol"]["requested_tiers"]:
+        task = make_raw_task(event, str(tier), horizon, public["protocol"])
+        task["history_event_ids"] = list(prior_ids)
+        tasks.append(task)
+    mini = {"protocol": public["protocol"], "reference_events": public["reference_events"],
+            "tasks": tasks}
+    if "calendar" in public:
+        mini["calendar"] = public["calendar"]
+    return mini, {task["tier"]: task for task in tasks}
+
+
+def _care_training_samples(public: dict, task: dict, cache: dict) -> list[dict]:
+    allowed = set(task.get("history_event_ids", []))
+    ordered = [e for e in public["reference_events"] if e["event_id"] in allowed]
+    samples = []
+    for index, event in enumerate(ordered):
+        prior_ids = [e["event_id"] for e in ordered[:index]]
+        if len(prior_ids) < 5:
+            continue
+        key = (event["event_id"], task["tier"], task["horizon_hours"],
+               tuple(prior_ids), digest(public.get("calendar")) if public.get("calendar") else None)
+        sample = cache.get(key)
+        if sample is None:
+            try:
+                mini, task_map = _care_historical_public(public, event, task["horizon_hours"], prior_ids)
+                hist_task = task_map[task["tier"]]
+                values, weights, meta = _multitier_analog_components(mini, hist_task)
+                base = _weighted_quantile(values, weights, 0.5)
+                final = event["tiers"][str(task["tier"])]["label"]["ep"]
+                sample = {"event_id": event["event_id"],
+                          "features": care_feature_dict(mini, hist_task, meta),
+                          "target": math.log(max(final, 1.0) / max(base, 1.0))}
+            except (KeyError, ValueError):
+                sample = False
+            cache[key] = sample
+        if sample:
+            samples.append(sample)
+    return samples
+
+
+def _care_oos_residuals(samples: list[dict]) -> list[float]:
+    residuals = []
+    for index in range(2, len(samples)):
+        earlier = samples[:index]
+        try:
+            model = _ridge_fit([row["features"] for row in earlier],
+                               [row["target"] for row in earlier])
+            predicted = _ridge_predict(model, samples[index]["features"])
+        except ValueError:
+            continue
+        residuals.append(samples[index]["target"] - predicted)
+    if len(residuals) < 3 and samples:
+        center = st.median(row["target"] for row in samples)
+        residuals = [row["target"] - center for row in samples]
+    return residuals or [0.0]
+
+
+def care_s_forecast(public: dict, task: dict, cache: dict | None = None) -> tuple[float, dict[str, float], dict]:
+    """CARE-S: analog ensemble + causal learned conditional correction + OOS residuals."""
+    if public["protocol"]["schema"] != "bandoribench-protocol-v2":
+        raise ValueError("CARE-S requires protocol-v2")
+    cache = cache if cache is not None else {}
+    values, weights, analog_meta = _multitier_analog_components(public, task)
+    samples = _care_training_samples(public, task, cache)
+    current_features = care_feature_dict(public, task, analog_meta)
+    if len(samples) >= 2:
+        model = _ridge_fit([row["features"] for row in samples],
+                           [row["target"] for row in samples])
+        correction = _ridge_predict(model, current_features)
+        feature_count = len(model["keys"])
+    elif samples:
+        correction = st.median(row["target"] for row in samples)
+        feature_count = len(samples[0]["features"])
+    else:
+        correction, feature_count = 0.0, len(current_features)
+    residuals = _care_oos_residuals(samples)
+    current_ep = task["history"][-1]["ep"]
+    ensemble_values, ensemble_weights = [], []
+    for value, weight in zip(values, weights):
+        for residual in residuals:
+            adjustment = max(-2.0, min(2.0, correction + residual))
+            ensemble_values.append(max(current_ep, value * math.exp(adjustment)))
+            ensemble_weights.append(weight / len(residuals))
+    quantiles = {str(q): _weighted_quantile(ensemble_values, ensemble_weights, q) for q in QUANTILES}
+    meta = {"training_events": len(samples), "oos_residuals": len(residuals),
+            "feature_count": feature_count, "log_correction": correction,
+            "analog_count": analog_meta["analog_count"],
+            "calendar_sha256": digest(public["calendar"]) if "calendar" in public else None}
+    return quantiles["0.5"], quantiles, meta
+
+
+def _isotonic_nonincreasing(values: list[float]) -> list[float]:
+    if not values:
+        return []
+    blocks = [{"sum": -float(value), "weight": 1, "count": 1} for value in values]
+    i = 0
+    while i < len(blocks) - 1:
+        left = blocks[i]["sum"] / blocks[i]["weight"]
+        right = blocks[i + 1]["sum"] / blocks[i + 1]["weight"]
+        if left <= right:
+            i += 1
+            continue
+        blocks[i:i + 2] = [{"sum": blocks[i]["sum"] + blocks[i + 1]["sum"],
+                            "weight": blocks[i]["weight"] + blocks[i + 1]["weight"],
+                            "count": blocks[i]["count"] + blocks[i + 1]["count"]}]
+        i = max(0, i - 1)
+    out = []
+    for block in blocks:
+        value = -(block["sum"] / block["weight"])
+        out.extend([value] * block["count"])
+    return out
+
+
+def _enforce_care_tier_order(public: dict, predictions: list[dict]) -> None:
+    task_by_case = {task["case_id"]: task for task in public["tasks"]}
+    pred_by_case = {row["case_id"]: row for row in predictions if not row.get("error")}
+    groups = defaultdict(list)
+    for task in public["tasks"]:
+        if task["case_id"] in pred_by_case:
+            groups[(task["event_id"], task["horizon_hours"])].append(task)
+    for tasks in groups.values():
+        tasks.sort(key=lambda task: task["tier"])
+        for q in QUANTILES:
+            key = str(q)
+            values = [max(pred_by_case[t["case_id"]]["quantiles"][key], t["history"][-1]["ep"])
+                      for t in tasks]
+            projected = _isotonic_nonincreasing(values)
+            for task, value in zip(tasks, projected):
+                pred_by_case[task["case_id"]]["quantiles"][key] = value
+        for task in tasks:
+            row = pred_by_case[task["case_id"]]
+            ordered = []
+            floor = task["history"][-1]["ep"]
+            for q in QUANTILES:
+                value = max(floor, row["quantiles"][str(q)])
+                if ordered:
+                    value = max(value, ordered[-1])
+                ordered.append(value)
+            row["quantiles"] = {str(q): value for q, value in zip(QUANTILES, ordered)}
+            row["prediction"] = row["quantiles"]["0.5"]
+            row["care"]["tier_order_constraint"] = True
 
 def weighted_interval_score(quantiles: dict, y: float) -> float:
     y = number(y, "outcome")
@@ -1154,13 +1540,15 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("--warmup-events", type=int, default=12)
     w.add_argument("--horizons", type=int, nargs="+", default=[72, 48, 24, 12, 6])
     w.add_argument("--stale-hours", type=int, default=3)
+    w.add_argument("--calendar", help="bandoribench-calendar-v1 JSON to freeze as public known-future input")
     w.add_argument("--out", required=True)
     p = commands.add_parser("predict", help="run a bundled baseline using public inputs only")
     p.add_argument("tasks")
     p.add_argument("--model", choices=("linear24", "persistence", "calibrated-linear24",
                                       "linear24-quantiles", "bestdori-recalibrated",
                                       "bestdori-hierarchical", "multitier-analog-ensemble",
-                                      "hhwx-instant", "hhwx-24h", "rinko-dpra-replay"), default="linear24")
+                                      "hhwx-instant", "hhwx-24h", "rinko-dpra-replay",
+                                      "care-s"), default="linear24")
     p.add_argument("--out", required=True)
     s = commands.add_parser("score", help="score an external or bundled submission")
     s.add_argument("benchmark")
@@ -1181,7 +1569,9 @@ def main(argv: list[str] | None = None) -> int:
             write_frozen(Path(args.out), bundle)
             print(json.dumps({"benchmark_id": bundle["benchmark_id"], "cases": len(bundle["tasks"])}))
         elif args.command == "freeze-walkforward":
-            bundle = freeze_walkforward(load(args.dataset), args.warmup_events, tuple(args.horizons), args.stale_hours)
+            calendar = load(args.calendar) if args.calendar else None
+            bundle = freeze_walkforward(load(args.dataset), args.warmup_events, tuple(args.horizons),
+                                        args.stale_hours, calendar)
             write_frozen(Path(args.out), bundle)
             print(json.dumps({"benchmark_id": bundle["benchmark_id"], "cases": len(bundle["tasks"]),
                               "warmup_events": len(bundle["protocol"]["warmup_event_ids"]),

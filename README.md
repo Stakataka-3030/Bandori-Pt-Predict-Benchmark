@@ -1,6 +1,6 @@
 # Bandori PT Predict Benchmark
 
-**v0.2.3 · HHWX / Rinko 重放基线，修正短窗投影回归测试。**
+**v0.3.0 · CARE-S 首个可训练条件集合模型：analog 先验 + 因果修正 + 日历/奖励条件。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
@@ -54,6 +54,9 @@ python bandoribench.py collect --server jp --source bestdori --recent 80 --tiers
 # 正式 v2：完整活动中前 12 场 warm-up，后续逐场 walk-forward，输入保留原始采样
 python bandoribench.py freeze-walkforward data/jp-80/dataset.json --warmup-events 12 --out runs/jp-v1
 
+# 若要显式评测节假日/调休日，把公开日历一起冻结进新的 benchmark
+python bandoribench.py freeze-walkforward data/cn-80/dataset.json --warmup-events 12 --calendar calendars/cn.json --out runs/cn-v1
+
 # 基线
 python bandoribench.py predict runs/jp-v1/public/tasks.json --model calibrated-linear24 --out runs/jp-calibrated-linear24.json
 python bandoribench.py score runs/jp-v1/private/benchmark.json runs/jp-calibrated-linear24.json --out runs/jp-calibrated-linear24-report.json
@@ -88,6 +91,7 @@ python bandoribench.py collect --server cn --source hhwx --recent 30 --tiers 500
 | `hhwx-instant` | 精确重放 HHWX UI 的约 9m45s 短窗速度线性投影 |
 | `hhwx-24h` | 精确重放 HHWX UI 的约 23h55m 日速度线性投影 |
 | `rinko-dpra-replay` | 重放 2022 Hoshino `bandori-predict` 保留下来的 Rinko/DPRA rolling-regression + slope/gamma `FIN` 算法 |
+| `care-s` | CARE-S：以多档 analog ensemble 为先验，按当时已结束活动拟合条件修正，使用 walk-forward OOS 残差生成概率分布，并支持冻结日历与 CN 奖励边界特征 |
 | `bestdori-recalibrated` | 旧 Pilot 的固定校准期公式家族，仅 protocol-v1 |
 
 `bestdori-hierarchical` 与 `bestdori-recalibrated` 都**不是 Bestdori 当年的实际预测档案，也不等同于当前 Bestdori 线上模型**。前者只复用公开公式思想，并在每个 hindcast 时点从当时已有历史重新估 rate；后者保留用于复现 Pilot。
@@ -95,6 +99,8 @@ python bandoribench.py collect --server cn --source hhwx --recent 30 --tiers 500
 `multitier-analog-ensemble` 是后续 WNC-style 联合模型之前的统计探针：它不训练神经网络，不使用当前活动真值；只测试“多档联合状态 + 历史轨迹形状 + ensemble”本身是否能超过现有单档基线。
 
 HHWX 的两条投影按其公开源码窗口和线性外推公式重放，因此在相同 raw prefix 下可复现；HHWX 页面另有的 “Bestdori prediction” 属于 Bestdori 公式家族，不重复列为独立模型。`rinko-dpra-replay` 来自公开保留下来的旧 Rinko 算法代码。茨菇第一预测线依赖 Bestdori `rates.json` 的历史状态，而旧 rate 快照未被可靠归档，因此暂不把“今天用当前 rate 重算过去”冒充历史平台预测；MYCX 的 JP/CN 适配留到后续模型阶段。
+
+CARE-S 的实现与训练边界见 [docs/CARE.md](docs/CARE.md)。显式日历使用 `bandoribench-calendar-v1`；字符串日期项表示在整个覆盖期都已公开，带 `known_at` 的项只有在起报时间不早于该时间时才可见，防止后来公布的调休安排回灌到更早 hindcast。
 
 外部算法只需读取 `public/tasks.json` 并按 [提交协议](docs/SCORING.md) 写出 JSON，然后使用同一个 `score` 命令。不限定 Python、神经网络或统计模型。
 

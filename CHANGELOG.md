@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- Add `care-s`, the first trainable CARE model: the multi-tier analog ensemble is retained as a prior, then a ridge-regularized conditional log correction is fit only from each task's earlier completed events.
+- Build probabilistic CARE output by convolving the current analog scenarios with rolling out-of-sample correction residuals; enforce nonnegative remaining PT and cross-tier terminal rank ordering.
+- Add `bandoribench-calendar-v1` support to protocol-v2 freezing. Calendar bytes and SHA-256 become part of the frozen benchmark; optional per-day `known_at` prevents late calendar announcements leaking into earlier origins.
+- Add server-local clock/weekend/holiday/makeup-workday features plus CN reward-boundary semantics to CARE-S.
+- Add causal, calendar, probability and cross-tier-order regression tests.
+
 ## 0.2.3
 
 - Fix the HHWX instant-projection regression test's hand-calculated expected value (500 + 300/10min × 100min = 3500); implementation was already correct.

@@ -510,6 +510,71 @@ class BenchmarkTests(unittest.TestCase):
         changed["end_at"] += 0  # explicit: replay uses only the task prefix plus known event window.
         self.assertEqual(value, b.rinko_dpra_replay(changed))
 
+
+    def test_calendar_freezes_into_walkforward_bundle(self):
+        calendar = {
+            "schema": "bandoribench-calendar-v1",
+            "server": "jp",
+            "utc_offset_hours": 9,
+            "days": {"2020-09-21": "holiday"},
+        }
+        bundle = b.freeze_walkforward(self.data, 8, calendar=calendar)
+        self.assertIn("calendar", bundle)
+        self.assertEqual(bundle["protocol"]["calendar_sha256"], b.digest(bundle["calendar"]))
+        self.assertEqual(b.public_bundle(bundle)["calendar"]["days"]["2020-09-21"]["type"], "holiday")
+
+    def test_calendar_known_at_prevents_late_schedule_leak(self):
+        timestamp = 1_600_000_000_000
+        local_day = b._local_datetime(timestamp, "jp").strftime("%Y-%m-%d")
+        calendar = b.validate_calendar({
+            "schema": "bandoribench-calendar-v1",
+            "server": "jp",
+            "utc_offset_hours": 9,
+            "days": {local_day: {"type": "holiday", "known_at": timestamp + b.HOUR}},
+        }, "jp")
+        fallback = "weekend" if b._local_datetime(timestamp, "jp").weekday() >= 5 else "weekday"
+        self.assertEqual(b._calendar_day_type(timestamp, "jp", calendar, timestamp), fallback)
+        self.assertEqual(b._calendar_day_type(timestamp, "jp", calendar, timestamp + 2 * b.HOUR), "holiday")
+
+    def test_care_s_is_full_coverage_and_probabilistic(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        submission = b.predict(b.public_bundle(bundle), "care-s")
+        point = b.evaluate(bundle, submission, "point", bootstrap=0)
+        prob = b.evaluate(bundle, submission, "probabilistic", bootstrap=0)
+        self.assertTrue(point["eligible"], point["failures"][:3])
+        self.assertTrue(prob["eligible"], prob["failures"][:3])
+        self.assertEqual(point["coverage"], 1.0)
+        self.assertEqual(prob["coverage"], 1.0)
+        self.assertIn("care", submission["predictions"][0])
+
+    def test_care_s_does_not_use_future_reference_truth(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        public = b.public_bundle(bundle)
+        target_id = "jp:9:1000:24"
+        before = {p["case_id"]: p for p in b.predict(public, "care-s")["predictions"]}[target_id]
+        changed = copy.deepcopy(public)
+        for event in changed["reference_events"]:
+            if event["event_id"] > 9:
+                for series in event["tiers"].values():
+                    series["label"]["ep"] += 999_999_999
+        after = {p["case_id"]: p for p in b.predict(changed, "care-s")["predictions"]}[target_id]
+        self.assertEqual(before, after)
+
+    def test_care_s_quantiles_and_tiers_are_ordered(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        submission = b.predict(b.public_bundle(bundle), "care-s")
+        rows = {p["case_id"]: p for p in submission["predictions"]}
+        selected = [next(t for t in bundle["tasks"]
+                         if t["event_id"] == 9 and t["horizon_hours"] == 24 and t["tier"] == tier)
+                    for tier in (100, 1000, 2000)]
+        for task in selected:
+            q = [rows[task["case_id"]]["quantiles"][str(x)] for x in b.QUANTILES]
+            self.assertEqual(q, sorted(q))
+            self.assertGreaterEqual(rows[task["case_id"]]["prediction"], task["history"][-1]["ep"])
+        medians = [rows[t["case_id"]]["prediction"] for t in selected]
+        self.assertGreaterEqual(medians[0], medians[1])
+        self.assertGreaterEqual(medians[1], medians[2])
+
     def test_version_markers_match(self):
         import tomllib
         root = Path(__file__).resolve().parents[1]
