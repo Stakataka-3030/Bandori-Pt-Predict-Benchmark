@@ -10,6 +10,8 @@
 
 Protocol v2 在冻结时先做输入 eligibility：以 **event × horizon 的完整 requested-tier panel** 为最小单位。若该起报点任一请求档位因 stale / insufficient history 无法形成任务，则该起报点的整组请求档位从冻结案例中排除，但同一活动其他正常 horizons 保留。因此不同 era × tier × horizon cell 的活动数可以不同；这属于冻结前的数据可用性，不是允许提交者缺题。提交仍必须覆盖 `tasks.json` 中的全部冻结案例。
 
+对于训练型外部模型，推荐使用 `model-eval` 的时间阶段视图。它仍使用同一个冻结 benchmark 和同一套 loss/scale/macro 规则，只是在 development / selection / final 阶段分别评分对应的冻结 case 子集；子集本身不会产生新的 benchmark ID。runner 的当前/未来真值通过流式协议隔离，训练事件只有在允许的时间点才会通过 `observe_event` 出现。详见 [MODEL_API.md](MODEL_API.md)。
+
 v2 不强制重采样。输入是原始 tracker observation；模型可自行决定时间网格。起报时最后观测默认不得陈旧超过 3 小时。历史中间的长缺口作为缺测保留。
 
 项目定位为可信离线回放，不实现沙箱或反作弊；`history_event_ids` 是科学协议中的因果边界。

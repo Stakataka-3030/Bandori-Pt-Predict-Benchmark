@@ -2,6 +2,7 @@
 import copy
 import json
 import math
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -746,6 +747,60 @@ class BenchmarkTests(unittest.TestCase):
             {"analog_point": 100.0, "bestdori_point": 200.0, "final": 170.0},
         ]
         self.assertAlmostEqual(b._l1_stack_weight(records), 0.7)
+
+    def test_model_evaluation_plan_and_training_export_are_chronological(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        plan = b.model_evaluation_plan(bundle)
+        phases = plan["phases"]
+        self.assertEqual(len(phases["development"]["target_event_ids"]), 6)
+        self.assertEqual(len(phases["selection"]["target_event_ids"]), 2)
+        self.assertEqual(len(phases["final"]["target_event_ids"]), 2)
+        self.assertEqual(
+            phases["development"]["target_event_ids"]
+            + phases["selection"]["target_event_ids"]
+            + phases["final"]["target_event_ids"],
+            bundle["protocol"]["target_event_ids"],
+        )
+        self.assertEqual(
+            phases["final"]["initial_training_event_ids"],
+            bundle["protocol"]["warmup_event_ids"]
+            + phases["development"]["target_event_ids"]
+            + phases["selection"]["target_event_ids"],
+        )
+        export = b.model_training_export(bundle, "final")
+        self.assertEqual(export["training_event_ids"], phases["final"]["initial_training_event_ids"])
+        final_ids = set(phases["final"]["target_event_ids"])
+        self.assertTrue(final_ids.isdisjoint({e["event_id"] for e in export["events"]}))
+        self.assertEqual(export["training_cutoff_ms"], phases["final"]["initial_training_cutoff_ms"])
+
+    def test_model_api_persistent_runner_scores_development_without_future_truth(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        root = Path(__file__).resolve().parents[1]
+        runner = [sys.executable, str(root / "examples" / "persistence_model.py")]
+        submission, report = b.run_model_api(
+            bundle, runner, phase="development", track="point", bootstrap=0
+        )
+        plan = b.model_evaluation_plan(bundle)
+        self.assertTrue(report["eligible"], report["failures"][:3])
+        self.assertTrue(report["model_api"]["protocol_eligible"])
+        self.assertEqual(report["model_id"], "example-persistence")
+        self.assertEqual(
+            len(submission["predictions"]),
+            len(plan["phases"]["development"]["case_ids"]),
+        )
+        self.assertEqual(len(report["temporal_checkpoints"]), 5)
+        self.assertTrue(all(row["n_cases"] > 0 for row in report["temporal_checkpoints"]))
+
+    def test_model_api_final_report_is_redacted(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        root = Path(__file__).resolve().parents[1]
+        runner = [sys.executable, str(root / "examples" / "persistence_model.py")]
+        _, report = b.run_model_api(bundle, runner, phase="final", track="point", bootstrap=0)
+        self.assertTrue(report["eligible"])
+        self.assertTrue(report["final_holdout"])
+        self.assertNotIn("case_losses", report)
+        self.assertNotIn("by_tier", report)
+        self.assertEqual(report["temporal_checkpoints"], [])
 
     def test_version_markers_match(self):
         import tomllib

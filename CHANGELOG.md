@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.5
+
+- Add a persistent JSONL external-model API with a small Python `bandoribench_model.serve()` helper and executable persistence-runner example.
+- Add `model-plan`, `model-export-training`, and `model-eval` so fixed or online-updating trained models can use a standardized leak-controlled interface and receive a score directly.
+- Stream only previously completed event truth to runners; current/future labels are never included in forecast panels.
+- Add deterministic chronological development / selection / final phases (~70/15/15), with multiple development checkpoints, case-level redaction for selection, and coarse one-shot final-holdout reporting.
+- Require a runner declaration of the latest BandoriBench label baked into its initial checkpoint and mark protocol eligibility separately from numerical score validity.
+- Allow the core evaluator to score a frozen case subset without changing the benchmark fingerprint, and document the model-selection/overfitting contract.
+
 ## 0.3.4
 
 - Change protocol-v2 target eligibility from event-tier batch rejection to horizon-local complete multi-tier panels: a bad origin drops only that event × horizon panel, not every other horizon for the activity.
