@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 HOUR = 3_600_000
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
@@ -485,14 +485,17 @@ def freeze(data: dict, n_calibration: int = 10, horizons: tuple[int, ...] = (72,
 
 def freeze_walkforward(data: dict, warmup_events: int = 12,
                        horizons: tuple[int, ...] = (72, 48, 24, 12, 6),
-                       stale_hours: int = 3, calendar: dict | None = None) -> dict:
+                       stale_hours: int = 3, calendar: dict | None = None,
+                       requested_tiers_override: tuple[int, ...] | None = None) -> dict:
     """Protocol v2: raw tracker prefixes with expanding historical context."""
     events = validate_dataset(data)
     if len({e["server"] for e in events}) != 1:
         raise ValueError("freeze one server per benchmark; compare servers separately")
     server = events[0]["server"]
     calendar = validate_calendar(calendar, server)
-    requested_tiers = [int(t) for t in data.get("requested_tiers", [])]
+    requested_tiers = ([int(t) for t in requested_tiers_override]
+                       if requested_tiers_override is not None
+                       else [int(t) for t in data.get("requested_tiers", [])])
     if not requested_tiers or len(set(requested_tiers)) != len(requested_tiers) or any(t not in TIERS for t in requested_tiers):
         raise ValueError("walk-forward datasets require valid requested_tiers")
     complete, incomplete = [], []
@@ -652,7 +655,7 @@ def _walkforward_bestdori_rate(public: dict, task: dict, shrink_k: float = 3.0) 
 def predict(public: dict, model: str = "linear24") -> dict:
     models = ("linear24", "persistence", "calibrated-linear24", "linear24-quantiles",
               "bestdori-recalibrated", "bestdori-hierarchical", "multitier-analog-ensemble",
-              "hhwx-instant", "hhwx-24h", "rinko-dpra-replay", "care-s")
+              "hhwx-instant", "hhwx-24h", "rinko-dpra-replay", "care-s", "care-s2")
     if model not in models:
         raise ValueError("unknown baseline")
     v2 = public["protocol"]["schema"] == "bandoribench-protocol-v2"
@@ -696,6 +699,8 @@ def predict(public: dict, model: str = "linear24") -> dict:
                 value = rinko_dpra_replay(task)
             elif model == "care-s":
                 value, row["quantiles"], row["care"] = care_s_forecast(public, task, care_cache)
+            elif model == "care-s2":
+                value, row["quantiles"], row["care"] = care_s2_forecast(public, task, care_cache)
             row["prediction"] = value
             if model == "linear24-quantiles":
                 residuals = _walkforward_residuals(public, task) if v2 else public["calibration"]["residuals"][scale_key(task)]
@@ -706,11 +711,12 @@ def predict(public: dict, model: str = "linear24") -> dict:
         except (ValueError, KeyError) as exc:
             row["error"] = str(exc)
         predictions.append(row)
-    if model == "care-s":
+    if model in ("care-s", "care-s2"):
         _enforce_care_tier_order(public, predictions)
     return {"benchmark_id": public["benchmark_id"], "model_id": model,
             "model_version": VERSION,
-            "provenance": ("care_s_causal_walk_forward" if model == "care-s"
+            "provenance": ("care_s2_adaptive_causal_walk_forward" if model == "care-s2"
+                           else "care_s_causal_walk_forward" if model == "care-s"
                            else "walk_forward_raw_history" if v2
                            else "offline_coarse_recompute_not_platform_archive"),
             "predictions": predictions}
@@ -1077,7 +1083,11 @@ def _care_training_samples(public: dict, task: dict, cache: dict) -> list[dict]:
                 final = event["tiers"][str(task["tier"])]["label"]["ep"]
                 sample = {"event_id": event["event_id"],
                           "features": care_feature_dict(mini, hist_task, meta),
-                          "target": math.log(max(final, 1.0) / max(base, 1.0))}
+                          "target": math.log(max(final, 1.0) / max(base, 1.0)),
+                          "base": base, "final": final,
+                          "current_ep": hist_task["history"][-1]["ep"],
+                          "analog_values": list(values),
+                          "analog_weights": list(weights)}
             except (KeyError, ValueError):
                 sample = False
             cache[key] = sample
@@ -1086,21 +1096,91 @@ def _care_training_samples(public: dict, task: dict, cache: dict) -> list[dict]:
     return samples
 
 
-def _care_oos_residuals(samples: list[dict]) -> list[float]:
-    residuals = []
+def _care_ridge_model(samples: list[dict], cache: dict) -> dict:
+    key = ("care_ridge", tuple(row["event_id"] for row in samples))
+    model = cache.get(key)
+    if model is None:
+        model = _ridge_fit([row["features"] for row in samples],
+                           [row["target"] for row in samples])
+        cache[key] = model
+    return model
+
+
+def _care_oos_records(samples: list[dict], cache: dict) -> list[dict]:
+    key = ("care_oos_records", tuple(row["event_id"] for row in samples))
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    records, prior_residuals = [], []
     for index in range(2, len(samples)):
         earlier = samples[:index]
         try:
-            model = _ridge_fit([row["features"] for row in earlier],
-                               [row["target"] for row in earlier])
-            predicted = _ridge_predict(model, samples[index]["features"])
+            model = _care_ridge_model(earlier, cache)
+            correction = _ridge_predict(model, samples[index]["features"])
         except ValueError:
             continue
-        residuals.append(samples[index]["target"] - predicted)
+        record = {"sample": samples[index], "correction": correction,
+                  "prior_residuals": list(prior_residuals)}
+        records.append(record)
+        prior_residuals.append(samples[index]["target"] - correction)
+    cache[key] = records
+    return records
+
+
+def _care_oos_residuals(samples: list[dict], cache: dict) -> list[float]:
+    residuals = [record["sample"]["target"] - record["correction"]
+                 for record in _care_oos_records(samples, cache)]
     if len(residuals) < 3 and samples:
         center = st.median(row["target"] for row in samples)
         residuals = [row["target"] - center for row in samples]
     return residuals or [0.0]
+
+
+def _care_s2_tuning(samples: list[dict], cache: dict) -> tuple[float, float]:
+    key = ("care_s2_tuning", tuple(row["event_id"] for row in samples))
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    records = _care_oos_records(samples, cache)
+    lambda_grid = (0.0, 0.25, 0.5, 0.75, 1.0)
+    tau_grid = (0.0, 0.25, 0.5, 0.75, 1.0)
+    if len(records) < 3:
+        result = (0.0, 0.0)
+        cache[key] = result
+        return result
+
+    def point_loss(lam: float) -> float:
+        errors = []
+        for record in records:
+            sample, correction = record["sample"], record["correction"]
+            adjustment = max(-2.0, min(2.0, lam * correction))
+            pred = max(sample["current_ep"], sample["base"] * math.exp(adjustment))
+            errors.append(abs(pred - sample["final"]))
+        return st.mean(errors)
+
+    lam = min(lambda_grid, key=lambda value: (point_loss(value), value))
+    wis_scores = []
+    for tau in tau_grid:
+        losses = []
+        for record in records:
+            residuals = record["prior_residuals"]
+            if len(residuals) < 3:
+                continue
+            sample, correction = record["sample"], record["correction"]
+            values, weights = [], []
+            for analog_value, analog_weight in zip(sample["analog_values"], sample["analog_weights"]):
+                for residual in residuals:
+                    adjustment = max(-2.0, min(2.0, lam * correction + tau * residual))
+                    values.append(max(sample["current_ep"], analog_value * math.exp(adjustment)))
+                    weights.append(analog_weight / len(residuals))
+            quantiles = {str(q): _weighted_quantile(values, weights, q) for q in QUANTILES}
+            losses.append(weighted_interval_score(quantiles, sample["final"]))
+        if losses:
+            wis_scores.append((st.mean(losses), tau))
+    tau = min(wis_scores)[1] if wis_scores else 0.0
+    result = (lam, tau)
+    cache[key] = result
+    return result
 
 
 def care_s_forecast(public: dict, task: dict, cache: dict | None = None) -> tuple[float, dict[str, float], dict]:
@@ -1112,8 +1192,7 @@ def care_s_forecast(public: dict, task: dict, cache: dict | None = None) -> tupl
     samples = _care_training_samples(public, task, cache)
     current_features = care_feature_dict(public, task, analog_meta)
     if len(samples) >= 2:
-        model = _ridge_fit([row["features"] for row in samples],
-                           [row["target"] for row in samples])
+        model = _care_ridge_model(samples, cache)
         correction = _ridge_predict(model, current_features)
         feature_count = len(model["keys"])
     elif samples:
@@ -1121,7 +1200,7 @@ def care_s_forecast(public: dict, task: dict, cache: dict | None = None) -> tupl
         feature_count = len(samples[0]["features"])
     else:
         correction, feature_count = 0.0, len(current_features)
-    residuals = _care_oos_residuals(samples)
+    residuals = _care_oos_residuals(samples, cache)
     current_ep = task["history"][-1]["ep"]
     ensemble_values, ensemble_weights = [], []
     for value, weight in zip(values, weights):
@@ -1132,6 +1211,48 @@ def care_s_forecast(public: dict, task: dict, cache: dict | None = None) -> tupl
     quantiles = {str(q): _weighted_quantile(ensemble_values, ensemble_weights, q) for q in QUANTILES}
     meta = {"training_events": len(samples), "oos_residuals": len(residuals),
             "feature_count": feature_count, "log_correction": correction,
+            "analog_count": analog_meta["analog_count"],
+            "calendar_sha256": digest(public["calendar"]) if "calendar" in public else None}
+    return quantiles["0.5"], quantiles, meta
+
+
+
+def care_s2_forecast(public: dict, task: dict, cache: dict | None = None) -> tuple[float, dict[str, float], dict]:
+    """CARE-S2: causally tune correction shrinkage and residual spread on prior OOS forecasts."""
+    if public["protocol"]["schema"] != "bandoribench-protocol-v2":
+        raise ValueError("CARE-S2 requires protocol-v2")
+    cache = cache if cache is not None else {}
+    values, weights, analog_meta = _multitier_analog_components(public, task)
+    samples = _care_training_samples(public, task, cache)
+    current_features = care_feature_dict(public, task, analog_meta)
+    if len(samples) >= 2:
+        model = _care_ridge_model(samples, cache)
+        raw_correction = _ridge_predict(model, current_features)
+        feature_count = len(model["keys"])
+    elif samples:
+        raw_correction = st.median(row["target"] for row in samples)
+        feature_count = len(samples[0]["features"])
+    else:
+        raw_correction, feature_count = 0.0, len(current_features)
+
+    lam, tau = _care_s2_tuning(samples, cache)
+    residuals = _care_oos_residuals(samples, cache)
+    current_ep = task["history"][-1]["ep"]
+    ensemble_values, ensemble_weights = [], []
+    for value, weight in zip(values, weights):
+        if tau == 0.0:
+            adjustment = max(-2.0, min(2.0, lam * raw_correction))
+            ensemble_values.append(max(current_ep, value * math.exp(adjustment)))
+            ensemble_weights.append(weight)
+            continue
+        for residual in residuals:
+            adjustment = max(-2.0, min(2.0, lam * raw_correction + tau * residual))
+            ensemble_values.append(max(current_ep, value * math.exp(adjustment)))
+            ensemble_weights.append(weight / len(residuals))
+    quantiles = {str(q): _weighted_quantile(ensemble_values, ensemble_weights, q) for q in QUANTILES}
+    meta = {"training_events": len(samples), "oos_residuals": len(residuals),
+            "feature_count": feature_count, "raw_log_correction": raw_correction,
+            "correction_shrinkage": lam, "residual_scale": tau,
             "analog_count": analog_meta["analog_count"],
             "calendar_sha256": digest(public["calendar"]) if "calendar" in public else None}
     return quantiles["0.5"], quantiles, meta
@@ -1541,6 +1662,8 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("--horizons", type=int, nargs="+", default=[72, 48, 24, 12, 6])
     w.add_argument("--stale-hours", type=int, default=3)
     w.add_argument("--calendar", help="bandoribench-calendar-v1 JSON to freeze as public known-future input")
+    w.add_argument("--tiers", type=int, nargs="+", choices=TIERS,
+                   help="override dataset requested_tiers for this frozen benchmark")
     w.add_argument("--out", required=True)
     p = commands.add_parser("predict", help="run a bundled baseline using public inputs only")
     p.add_argument("tasks")
@@ -1548,7 +1671,7 @@ def main(argv: list[str] | None = None) -> int:
                                       "linear24-quantiles", "bestdori-recalibrated",
                                       "bestdori-hierarchical", "multitier-analog-ensemble",
                                       "hhwx-instant", "hhwx-24h", "rinko-dpra-replay",
-                                      "care-s"), default="linear24")
+                                      "care-s", "care-s2"), default="linear24")
     p.add_argument("--out", required=True)
     s = commands.add_parser("score", help="score an external or bundled submission")
     s.add_argument("benchmark")
@@ -1571,7 +1694,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "freeze-walkforward":
             calendar = load(args.calendar) if args.calendar else None
             bundle = freeze_walkforward(load(args.dataset), args.warmup_events, tuple(args.horizons),
-                                        args.stale_hours, calendar)
+                                        args.stale_hours, calendar,
+                                        tuple(args.tiers) if args.tiers else None)
             write_frozen(Path(args.out), bundle)
             print(json.dumps({"benchmark_id": bundle["benchmark_id"], "cases": len(bundle["tasks"]),
                               "warmup_events": len(bundle["protocol"]["warmup_event_ids"]),

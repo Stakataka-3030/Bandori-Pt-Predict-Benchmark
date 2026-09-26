@@ -575,6 +575,42 @@ class BenchmarkTests(unittest.TestCase):
         self.assertGreaterEqual(medians[0], medians[1])
         self.assertGreaterEqual(medians[1], medians[2])
 
+
+    def test_walkforward_tier_override_builds_common_panel(self):
+        data = copy.deepcopy(self.data)
+        data["requested_tiers"] = [100, 1000, 2000]
+        for event in data["events"]:
+            event["tiers"].pop("2000", None)
+        bundle = b.freeze_walkforward(data, 8, requested_tiers_override=(100, 1000))
+        self.assertEqual(bundle["protocol"]["requested_tiers"], [100, 1000])
+        self.assertTrue(all(task["tier"] in (100, 1000) for task in bundle["tasks"]))
+
+    def test_care_s2_is_full_coverage_and_adaptive(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        submission = b.predict(b.public_bundle(bundle), "care-s2")
+        point = b.evaluate(bundle, submission, "point", bootstrap=0)
+        prob = b.evaluate(bundle, submission, "probabilistic", bootstrap=0)
+        self.assertTrue(point["eligible"], point["failures"][:3])
+        self.assertTrue(prob["eligible"], prob["failures"][:3])
+        self.assertEqual(point["coverage"], 1.0)
+        self.assertEqual(prob["coverage"], 1.0)
+        metas = [row["care"] for row in submission["predictions"]]
+        self.assertTrue(all(meta["correction_shrinkage"] in (0.0, 0.25, 0.5, 0.75, 1.0) for meta in metas))
+        self.assertTrue(all(meta["residual_scale"] in (0.0, 0.25, 0.5, 0.75, 1.0) for meta in metas))
+
+    def test_care_s2_future_truth_invariance(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        public = b.public_bundle(bundle)
+        target_id = "jp:9:1000:24"
+        before = {p["case_id"]: p for p in b.predict(public, "care-s2")["predictions"]}[target_id]
+        changed = copy.deepcopy(public)
+        for event in changed["reference_events"]:
+            if event["event_id"] > 9:
+                for series in event["tiers"].values():
+                    series["label"]["ep"] += 999_999_999
+        after = {p["case_id"]: p for p in b.predict(changed, "care-s2")["predictions"]}[target_id]
+        self.assertEqual(before, after)
+
     def test_version_markers_match(self):
         import tomllib
         root = Path(__file__).resolve().parents[1]

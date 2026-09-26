@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+- Add `care-s2`: choose conditional-correction shrinkage λ and residual-spread scale τ from each task's earlier out-of-sample historical forecasts. No horizon/tier weight is tuned on the current benchmark outcome.
+- Cache CARE ridge fits and OOS records across expanding prefixes to reduce repeated pure-Python fitting work.
+- Add `freeze-walkforward --tiers ...` so a collected dataset may freeze a common scoring panel without discarding it just because another sparse tier was also collected.
+- Preserve CARE-S v0.3.0 as a reproducible ablation.
+
 ## 0.3.0
 
 - Add `care-s`, the first trainable CARE model: the multi-tier analog ensemble is retained as a prior, then a ridge-regularized conditional log correction is fit only from each task's earlier completed events.

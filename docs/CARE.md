@@ -54,3 +54,17 @@ JP is the architecture-development environment. CN must refit CARE-S on CN histo
 ## Current scope
 
 CARE-S predicts terminal cutoffs and marginal quantiles. It does not yet emit full future trajectories or preserve an externally visible joint ensemble member identity across tiers. Those are later CARE extensions.
+
+
+## CARE-S2 adaptive shrinkage
+
+CARE-S v0.3.0 deliberately applied the learned correction and its OOS residual distribution at full strength. CARE-S2 treats those as hypotheses that must earn weight from prior hindcasts.
+
+For every current task, CARE-S2 reconstructs rolling historical OOS forecasts and chooses:
+
+- `lambda ∈ {0, .25, .5, .75, 1}` to minimize prior point MAE for the conditional log correction;
+- `tau ∈ {0, .25, .5, .75, 1}` to minimize prior WIS for the OOS residual spread.
+
+Both choices use only events already present in the current task's `history_event_ids`. `lambda=0` means the learned point correction is rejected; `tau=0` means no extra CARE residual convolution is added beyond the analog ensemble's own dispersion. This creates a causal path back to the strong analog baseline when the extra model does not validate historically.
+
+CARE-S2 also caches ridge models and OOS prefix records during one prediction run; the cache changes runtime only, not forecast semantics.
