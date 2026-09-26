@@ -127,3 +127,24 @@ v0.3.6 fixes the initial v0.3.5 parser bug where the runner remainder could swal
 ```powershell
 python bandoribench.py model-eval runs/cn-core-v1 --phase development --track point --out runs/report.json -- python my_model.py checkpoint.bin
 ```
+
+
+## Multi-worker competition layout
+
+Do **not** distribute the central benchmark's `public/tasks.json` or `private/benchmark.json` to workers. Protocol-v2 `public/tasks.json` is intended for trusted replay compatibility: its shared `reference_events` retain event labels, and built-in algorithms obey each task's `history_event_ids` causally. That logical contract is insufficient for a model-training competition.
+
+Instead, the judge creates a development-only devkit:
+
+```powershell
+python bandoribench.py model-export-devkit runs/cn-core-v1 --out D:\Creations\PtBenchmark\PtBenchmark-Shared\cn-core-development
+```
+
+The devkit physically contains only the original warm-up events and development target events. Selection/final events and truth are absent. Workers may freely inspect the devkit and repeatedly run:
+
+```powershell
+python bandoribench.py model-eval D:\Creations\PtBenchmark\PtBenchmark-Shared\cn-core-development --phase development --track point --out runs\development.json -- python model.py
+```
+
+For the 42-event CN-Core split, the central benchmark has 30 development events, 6 selection events, and 6 final events. The corresponding 90 selection/final cases are not 90 independent samples: they are 6 events × 5 horizons × 3 tiers, with strong within-event dependence. Treat the event count as the effective model-selection sample size.
+
+Recommended tournament rule: each worker nominates exactly one development champion to the central judge; the judge evaluates all champions once on selection; one global winner advances to final. Selection and final reports intentionally omit case/tier/horizon diagnostics.

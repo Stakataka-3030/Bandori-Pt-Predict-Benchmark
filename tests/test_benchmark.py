@@ -791,6 +791,47 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(len(report["temporal_checkpoints"]), 5)
         self.assertTrue(all(row["n_cases"] > 0 for row in report["temporal_checkpoints"]))
 
+    def test_model_development_bundle_excludes_selection_and_final(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        full_plan = b.model_evaluation_plan(bundle)
+        devkit = b.model_development_bundle(bundle)
+        self.assertTrue(devkit["protocol"]["model_devkit"])
+        self.assertEqual(
+            devkit["protocol"]["target_event_ids"],
+            full_plan["phases"]["development"]["target_event_ids"],
+        )
+        included = {e["event_id"] for e in devkit["reference_events"]}
+        self.assertTrue(set(full_plan["phases"]["selection"]["target_event_ids"]).isdisjoint(included))
+        self.assertTrue(set(full_plan["phases"]["final"]["target_event_ids"]).isdisjoint(included))
+        self.assertEqual(set(devkit["truth"]), set(full_plan["phases"]["development"]["case_ids"]))
+        dev_plan = b.model_evaluation_plan(devkit)
+        self.assertEqual(dev_plan["phases"]["development"]["target_event_ids"],
+                         devkit["protocol"]["target_event_ids"])
+        self.assertEqual(dev_plan["phases"]["selection"]["target_event_ids"], [])
+        self.assertEqual(dev_plan["phases"]["final"]["target_event_ids"], [])
+
+    def test_model_development_bundle_self_evaluates_full_development(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        devkit = b.model_development_bundle(bundle)
+        root = Path(__file__).resolve().parents[1]
+        runner = [sys.executable, str(root / "examples" / "persistence_model.py")]
+        _, report = b.run_model_api(devkit, runner, phase="development", track="point", bootstrap=0)
+        self.assertTrue(report["model_api"]["protocol_eligible"])
+        self.assertEqual(report["n_events_scored"], len(devkit["protocol"]["target_event_ids"]))
+        self.assertEqual(report["n_expected"], len(devkit["tasks"]))
+
+    def test_selection_report_is_aggregate_only(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        root = Path(__file__).resolve().parents[1]
+        runner = [sys.executable, str(root / "examples" / "persistence_model.py")]
+        _, report = b.run_model_api(bundle, runner, phase="selection", track="point", bootstrap=0)
+        self.assertTrue(report["selection_holdout"])
+        self.assertNotIn("case_losses", report)
+        self.assertNotIn("by_tier", report)
+        self.assertNotIn("by_horizon_hours", report)
+        self.assertEqual(report["temporal_checkpoints"], [])
+        self.assertGreater(report["n_expected"], report["n_events_scored"])
+
     def test_model_eval_cli_separator_preserves_options_and_runner(self):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:

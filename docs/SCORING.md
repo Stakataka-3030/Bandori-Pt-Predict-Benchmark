@@ -87,3 +87,10 @@ Coverage 不硬塞进主分，以免破坏 WIS 的 proper-scoring 结构。Pilot
 ## 6. 不确定性
 
 默认 200 次 whole-event bootstrap，按 era 分层，同一活动的全部 tier/horizon 一起重采样。区间描述有限历史活动下的成绩波动，不覆盖长期机制变化、上游数据偏差或反复调参造成的测试集过拟合。
+
+
+## Competition-safe model evaluation
+
+For multi-worker model competitions, use a development-only devkit rather than distributing protocol-v2 `public/tasks.json`. The latter contains shared labeled `reference_events` for trusted replay and therefore is not a physically isolated contestant artifact.
+
+Report both case count and event count. Tier/horizon cases from one event are correlated; model-selection strength is governed much more by the number of held-out events than by the raw number of cases. Selection/final outputs are aggregate by default.

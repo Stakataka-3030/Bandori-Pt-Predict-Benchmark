@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.3.6"
+VERSION = "0.3.7"
 HOUR = 3_600_000
 MODEL_API_VERSION = "bandoribench-model-api-v1"
 MODEL_PHASES = ("development", "selection", "final", "all")
@@ -1615,7 +1615,10 @@ def evaluate(bundle: dict, submission: dict, track: str = "point", bootstrap: in
               "model_id": submission.get("model_id"), "track": track,
               "synthetic": bundle["protocol"]["synthetic"], "eligible": eligible,
               "score": None, "coverage": len(rows) / len(expected), "n_expected": len(expected),
-              "n_scored": len(rows), "failures": failures, "dataset_exclusions": bundle["exclusions"],
+              "n_scored": len(rows),
+              "n_events_expected": len({t["event_id"] for t in expected.values()}),
+              "n_events_scored": len({row["event_id"] for row in rows}),
+              "failures": failures, "dataset_exclusions": bundle["exclusions"],
               "knowledge_time": bundle["protocol"]["knowledge_time"],
               "evaluation_subset": case_ids is not None}
     # No flattering partial score: full case coverage is required on each track.
@@ -1682,21 +1685,29 @@ def model_evaluation_plan(bundle: dict, development_blocks: int = 5) -> dict:
     if bundle["protocol"].get("schema") != "bandoribench-protocol-v2":
         raise ValueError("model API requires protocol-v2")
     target_ids = list(bundle["protocol"]["target_event_ids"])
-    if len(target_ids) < 3:
-        raise ValueError("model API needs at least 3 target events")
-    n_selection = max(1, round(len(target_ids) * 0.15))
-    n_final = max(1, round(len(target_ids) * 0.15))
-    while n_selection + n_final >= len(target_ids):
-        if n_selection >= n_final and n_selection > 1:
-            n_selection -= 1
-        elif n_final > 1:
-            n_final -= 1
-        else:
-            raise ValueError("not enough target events for three model-evaluation phases")
-    n_development = len(target_ids) - n_selection - n_final
-    development = target_ids[:n_development]
-    selection = target_ids[n_development:n_development + n_selection]
-    final = target_ids[n_development + n_selection:]
+    if len(target_ids) < 1:
+        raise ValueError("model API needs at least 1 target event")
+    is_devkit = bool(bundle["protocol"].get("model_devkit"))
+    if is_devkit:
+        development = target_ids
+        selection = []
+        final = []
+    else:
+        if len(target_ids) < 3:
+            raise ValueError("model API needs at least 3 target events")
+        n_selection = max(1, round(len(target_ids) * 0.15))
+        n_final = max(1, round(len(target_ids) * 0.15))
+        while n_selection + n_final >= len(target_ids):
+            if n_selection >= n_final and n_selection > 1:
+                n_selection -= 1
+            elif n_final > 1:
+                n_final -= 1
+            else:
+                raise ValueError("not enough target events for three model-evaluation phases")
+        n_development = len(target_ids) - n_selection - n_final
+        development = target_ids[:n_development]
+        selection = target_ids[n_development:n_development + n_selection]
+        final = target_ids[n_development + n_selection:]
     warmup = list(bundle["protocol"]["warmup_event_ids"])
     ref = {e["event_id"]: e for e in bundle["reference_events"]}
     task_ids_by_event = defaultdict(list)
@@ -1726,14 +1737,15 @@ def model_evaluation_plan(bundle: dict, development_blocks: int = 5) -> dict:
                                   min(development_blocks, len(development))),
         "selection": make_phase("selection", selection, warmup + development, 1),
         "final": make_phase("final", final, warmup + development + selection, 1),
-        "all": make_phase("all", target_ids, warmup, min(6, len(target_ids))),
+        "all": make_phase("all", target_ids, warmup, min(development_blocks, len(target_ids))),
     }
     body = {
         "schema": "bandoribench-model-eval-plan-v1",
         "api_version": MODEL_API_VERSION,
         "benchmark_id": bundle["benchmark_id"],
         "policy": {
-            "split": "chronological_70_15_15_by_target_event",
+            "split": ("development-only exposed devkit" if is_devkit
+                      else "chronological_70_15_15_by_target_event"),
             "development": "tune architecture/hyperparameters; detailed diagnostics allowed",
             "selection": "choose among already-developed candidates; no case-level losses by default",
             "final": "one-shot tail holdout; aggregate report only by default",
@@ -1742,6 +1754,71 @@ def model_evaluation_plan(bundle: dict, development_blocks: int = 5) -> dict:
         "phases": phases,
     }
     body["plan_id"] = digest(body)
+    return body
+
+
+def model_development_bundle(bundle: dict, development_blocks: int = 5) -> dict:
+    """Create a self-contained tuning bundle with no selection/final events or truth."""
+    verify_bundle(bundle)
+    plan = model_evaluation_plan(bundle, development_blocks)
+    development = plan["phases"]["development"]
+    warmup_ids = list(bundle["protocol"]["warmup_event_ids"])
+    target_ids = list(development["target_event_ids"])
+    allowed_events = set(warmup_ids + target_ids)
+    allowed_cases = set(development["case_ids"])
+
+    protocol = dict(bundle["protocol"])
+    protocol["software_version"] = VERSION
+    protocol["parent_benchmark_id"] = bundle["benchmark_id"]
+    protocol["model_devkit"] = True
+    protocol["warmup_event_ids"] = warmup_ids
+    protocol["target_event_ids"] = target_ids
+    protocol["eligible_target_event_ids"] = [
+        eid for eid in target_ids
+        if any(task["event_id"] == eid and task["case_id"] in allowed_cases for task in bundle["tasks"])
+    ]
+    protocol["fully_excluded_target_event_ids"] = [
+        eid for eid in target_ids if eid not in protocol["eligible_target_event_ids"]
+    ]
+    protocol["target_case_count_before_eligibility"] = (
+        len(target_ids) * len(protocol["requested_tiers"]) * len(protocol["horizons"])
+    )
+    tasks = [task for task in bundle["tasks"] if task["case_id"] in allowed_cases]
+    truth = {case_id: bundle["truth"][case_id] for case_id in allowed_cases}
+    protocol["eligible_case_count"] = len(tasks)
+    protocol["excluded_case_count"] = protocol["target_case_count_before_eligibility"] - len(tasks)
+    exclusions = [
+        row for row in bundle["exclusions"]
+        if row.get("stage") == "warmup_scale" or row.get("event") in allowed_events
+    ]
+    reason_counts = defaultdict(int)
+    for row in exclusions:
+        if row.get("stage") == "hindcast":
+            reason_counts[row["reason"]] += 1
+    protocol["excluded_cases_by_reason"] = dict(sorted(reason_counts.items()))
+    reference_events = [
+        event for event in bundle["reference_events"] if event["event_id"] in allowed_events
+    ]
+
+    body = {
+        "protocol": protocol,
+        "scales": bundle["scales"],
+        "tasks": tasks,
+        "truth": truth,
+        "reference_events": reference_events,
+        "exclusions": exclusions,
+        "devkit": {
+            "schema": "bandoribench-model-devkit-v1",
+            "parent_benchmark_id": bundle["benchmark_id"],
+            "parent_plan_id": plan["plan_id"],
+            "exposed_phase": "development",
+            "safe_to_share_for_tuning": True,
+            "selection_final_events_included": False,
+        },
+    }
+    if "calendar" in bundle:
+        body["calendar"] = bundle["calendar"]
+    body["benchmark_id"] = digest(body)
     return body
 
 
@@ -1970,12 +2047,14 @@ def run_model_api(bundle: dict, runner: list[str], phase: str = "development",
 
     if phase in ("selection", "final"):
         report.pop("case_losses", None)
-    if phase == "final":
         for key in ("by_horizon_hours", "by_tier", "by_era", "below_current_count",
                     "median_bias", "coverage50", "coverage90",
                     "mean_interval_width50", "mean_interval_width90"):
             report.pop(key, None)
         report["temporal_checkpoints"] = []
+    if phase == "selection":
+        report["selection_holdout"] = True
+    elif phase == "final":
         report["final_holdout"] = True
     elif phase == "all":
         report["research_diagnostic_only"] = True
@@ -2243,6 +2322,10 @@ def main(argv: list[str] | None = None) -> int:
     mp.add_argument("benchmark", help="frozen benchmark directory or private/benchmark.json")
     mp.add_argument("--development-blocks", type=int, default=5)
     mp.add_argument("--out")
+    md = commands.add_parser("model-export-devkit", help="export a self-contained development-only tuning benchmark")
+    md.add_argument("benchmark", help="frozen benchmark directory or private/benchmark.json")
+    md.add_argument("--development-blocks", type=int, default=5)
+    md.add_argument("--out", required=True)
     mx = commands.add_parser("model-export-training", help="export only labels allowed before a model-evaluation phase")
     mx.add_argument("benchmark", help="frozen benchmark directory or private/benchmark.json")
     mx.add_argument("--phase", choices=MODEL_PHASES, default="development")
@@ -2310,6 +2393,14 @@ def main(argv: list[str] | None = None) -> int:
             if args.out:
                 save(args.out, plan)
             print(json.dumps(plan, ensure_ascii=False, indent=2))
+        elif args.command == "model-export-devkit":
+            bundle = load(_benchmark_path(args.benchmark))
+            devkit = model_development_bundle(bundle, args.development_blocks)
+            write_frozen(Path(args.out), devkit)
+            print(json.dumps({"benchmark_id": devkit["benchmark_id"],
+                              "parent_benchmark_id": devkit["devkit"]["parent_benchmark_id"],
+                              "development_events": len(devkit["protocol"]["target_event_ids"]),
+                              "cases": len(devkit["tasks"])}))
         elif args.command == "model-export-training":
             bundle = load(_benchmark_path(args.benchmark))
             export = model_training_export(bundle, args.phase, args.development_blocks)
