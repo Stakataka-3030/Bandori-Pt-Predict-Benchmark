@@ -13,6 +13,7 @@ import time
 import traceback
 import webbrowser
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,7 +34,8 @@ RELEASE_ROOT = "https://github.com/Stakataka-3030/Bandori-Pt-Predict-Benchmark/r
 
 def current_version():
     if getattr(sys, "frozen", False):
-        path = Path(sys.executable).resolve().parent / "VERSION"
+        bundled = HERE / "VERSION"
+        path = bundled if bundled.is_file() else Path(sys.executable).resolve().parent / "VERSION"
     else:
         path = HERE.parents[1] / "VERSION"
     return path.read_text(encoding="utf-8").strip()
@@ -42,6 +44,10 @@ def current_version():
 def version_tuple(value):
     match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", value)
     return tuple(map(int, match.groups())) if match else None
+
+
+def report_request(path):
+    return REPORT_RE.fullmatch(urlsplit(path).path)
 
 
 def check_update(version, opener=urlopen):
@@ -62,7 +68,7 @@ def check_update(version, opener=urlopen):
         remote = version_tuple(tag) if isinstance(tag, str) else None
         assets = release.get("assets", [])
         if remote is None or not isinstance(assets, list) or not any(
-                isinstance(asset, dict) and re.fullmatch(r"Tsukushi-Windows-.*\.zip", asset.get("name", ""))
+                isinstance(asset, dict) and re.fullmatch(r"Tsukushi-Windows-.*\.(?:zip|exe)", asset.get("name", ""))
                 for asset in assets):
             continue
         url = release.get("html_url", "")
@@ -86,7 +92,8 @@ def home_directory():
 
 def default_state_path():
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent / "tsukushi-state.json"
+        bundled = HERE / "tsukushi-state.json"
+        return bundled if bundled.is_file() else Path(sys.executable).resolve().parent / "tsukushi-state.json"
     return HERE / "tsukushi-state.json"
 
 
@@ -166,26 +173,29 @@ class Handler(BaseHTTPRequestHandler):
         return self.server.app
 
     def do_GET(self):
-        if self.path == "/":
+        path = urlsplit(self.path).path
+        if path == "/":
             return self._send(200, self.app.html, "text/html; charset=utf-8")
-        if self.path == "/api/health":
+        if path == "/icon.png":
+            return self._send(200, (HERE / "icon.png").read_bytes(), "image/png")
+        if path == "/api/health":
             response = {"status": "ok", "model_ids": self.app.state["model_ids"],
                         "training_cutoff_at": self.app.state["training_cutoff_at"],
                         "state_sha256": self.app.state["fit_sha256"],
                         "app_version": current_version()}
             return self._send(200, json.dumps(response).encode(), "application/json")
-        if self.path == "/api/update":
+        if path == "/api/update":
             try:
                 response = check_update(current_version())
                 return self._send(200, json.dumps(response).encode(), "application/json")
             except (HTTPError, URLError, TimeoutError, OSError, ValueError):
                 return self._send(503, '{"error":"无法获取更新信息，请稍后重试"}'.encode("utf-8"),
                                   "application/json; charset=utf-8")
-        if self.path == "/api/help":
+        if path == "/api/help":
             path = editable_help_path()
             body = path.read_bytes() if path.is_file() else "说明尚未添加。".encode("utf-8")
             return self._send(200, body, "text/plain; charset=utf-8")
-        match = REPORT_RE.fullmatch(self.path)
+        match = report_request(self.path)
         if match:
             report_id, ext = match.groups()
             path = self.app.output_dir / f"{report_id}.{ext}"

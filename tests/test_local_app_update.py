@@ -9,7 +9,7 @@ from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parents[1] / "examples" / "local_app"
 sys.path.insert(0, str(APP_DIR))
-from app import check_update, current_version  # noqa: E402
+from app import check_update, current_version, report_request  # noqa: E402
 
 
 class Response(io.BytesIO):
@@ -28,6 +28,12 @@ def opener_for(releases):
 
 
 class UpdateTests(unittest.TestCase):
+    def test_generated_report_accepts_cache_query(self):
+        match = report_request("/reports/324-1790500947044.html?v=1790500947044")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.groups(), ("324-1790500947044", "html"))
+        self.assertIsNone(report_request("/reports/../private/benchmark.json"))
+
     def test_version_is_repo_version(self):
         self.assertEqual(current_version(),
                          (APP_DIR.parents[1] / "VERSION").read_text().strip())
@@ -63,6 +69,13 @@ class UpdateTests(unittest.TestCase):
         result = check_update("0.3.10", opener_for([release]))
         self.assertEqual(result["status"], "up_to_date")
         self.assertNotIn("release_url", result)
+
+    def test_single_file_release_is_offered(self):
+        release = {"tag_name": "v0.3.11", "draft": False, "prerelease": False,
+                   "assets": [{"name": "Tsukushi-Windows-SingleFile-v0.3.11.exe"}],
+                   "html_url": "https://github.com/Stakataka-3030/Bandori-Pt-Predict-Benchmark/releases/tag/v0.3.11"}
+        result = check_update("0.3.10", opener_for([release]))
+        self.assertEqual(result["status"], "update_available")
 
 
 if __name__ == "__main__":

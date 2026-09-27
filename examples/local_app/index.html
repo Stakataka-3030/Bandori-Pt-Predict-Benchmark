@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/png" href="/icon.png">
   <title>Tsukushi · 本地档线预测</title>
   <style>
     :root { font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; color:#243039; background:#f3f5f1; }
@@ -58,7 +59,7 @@
   </style>
 </head>
 <body><main class="shell">
-  <header><div><div class="eyebrow">LOCAL FORECAST · TSUKUSHI</div><h1>档线预测</h1><p class="subtitle">选一个数据来源，在本机生成并查看当前活动预测线。</p></div><div class="top-actions"><span class="pill">本地计算 · 无需登录</span><button id="quit" type="button">退出</button></div></header>
+  <header><div><div class="eyebrow">LOCAL FORECAST · TSUKUSHI</div><h1>档线预测</h1><p class="subtitle">选一个数据来源，在本机生成并查看当前活动预测线。</p></div><div class="top-actions"><span class="pill">预测计算可能需要几十秒</span><button id="quit" type="button">退出</button></div></header>
   <section class="box">
     <div class="controls">
       <div><label for="source">档线来源</label><select id="source"><option value="bestdori" selected>Bestdori（默认）</option><option value="hhwx">HHWX</option></select></div>
@@ -73,7 +74,7 @@
   </section>
   <div class="about"><span id="model-state">模型状态读取中…</span></div>
 </main>
-<nav class="dock" aria-label="主要操作"><button id="refresh" type="button">刷新</button><a id="download" href="#" aria-disabled="true" download="tsukushi-prediction.png">导出图片</a><button id="help" type="button">说明</button><button id="check-update" type="button">检查更新</button></nav>
+<nav class="dock" aria-label="主要操作"><button id="refresh" type="button">预测</button><a id="download" href="#" aria-disabled="true" download="tsukushi-prediction.png">导出图片</a><button id="help" type="button">说明</button><button id="check-update" type="button">检查更新</button></nav>
 <dialog id="help-dialog"><div class="dialog-head"><h2>说明</h2><button id="close-help" type="button">关闭</button></div><div id="help-text">说明尚未添加。</div></dialog>
 <dialog id="update-dialog"><div class="dialog-head"><h2>检查更新</h2><button id="close-update" type="button">关闭</button></div><p id="update-text"></p><a id="release-link" hidden target="_blank" rel="noopener noreferrer">查看 GitHub Release</a></dialog>
 <script>
@@ -91,7 +92,7 @@ async function generate(){let button=$('refresh');button.disabled=true;button.te
   $('stats').replaceChildren();for(let tier of [500,1000,1500,2000]){let box=document.createElement('div');box.className='stat';let label=document.createElement('span');label.textContent='T'+tier+' · kaori 终值';let value=document.createElement('strong');value.textContent=points(d.control[tier]);box.append(label,value);$('stats').appendChild(box)}
   $('viewer').src=d.viewer_url+'?v='+d.issued_at;$('download').href=d.image_url;$('download').download='tsukushi-'+d.event_id+'-'+d.issued_at+'.png';$('download').setAttribute('aria-disabled','false');$('result').hidden=false;
   notice('已生成。切换档位可查看成员线，底部可导出完整图片。');$('result').scrollIntoView({behavior:'smooth',block:'start'});
-}catch(e){notice(e.message||String(e),true)}finally{button.disabled=false;button.textContent='刷新'}}
+}catch(e){notice(e.message||String(e),true)}finally{button.disabled=false;button.textContent=$('result').hidden?'预测':'刷新'}}
 $('refresh').addEventListener('click',generate);
 $('event').addEventListener('keydown',e=>{if(e.key==='Enter')generate()});
 $('quit').addEventListener('click',async()=>{await fetch('/api/quit',{method:'POST'});notice('应用已退出，可以关闭此页面。');$('refresh').disabled=true});

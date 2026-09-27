@@ -21,9 +21,11 @@ python bandoribench.py demo --out runs/demo
 
 ### Windows 本地预测器
 
-解压 `Tsukushi-Windows-v0.3.10.zip`，运行文件夹中的 `Tsukushi.exe`。应用在本机打开界面，默认读取 Bestdori，也可选 HHWX；活动开场满 3 小时后可按“刷新”生成当前四档预测，按“导出图片”保存完整图。初开场时数据量少，前 24 小时的预报主要供参考。应用不自动推送，也不需要帐号；读取实时档线和检查更新时需要联网。“说明”的正文可放在程序旁的 `说明.txt`。更新检查只在 GitHub 上有更新的 Tsukushi Windows 包时显示对应 Release 链接。
+解压 `Tsukushi-Windows-v0.3.10.zip`，运行文件夹中的 `Tsukushi.exe`。应用在本机打开界面，默认读取 Bestdori，也可选 HHWX；活动开场满 3 小时后可按“预测”生成当前四档预测，有报表后按钮变为“刷新”，按“导出图片”保存完整图。初开场时数据量少，前 24 小时的预报主要供参考。应用不自动推送，也不需要帐号；读取实时档线和检查更新时需要联网。“说明”的正文可放在程序旁的 `说明.txt`。更新检查只在 GitHub 上有更新的 Tsukushi Windows 包时显示对应 Release 链接。
 
-开发者可用 `examples/local_app/build_windows.ps1 -StatePath <已导出的状态文件>` 重建 Windows 压缩包。状态文件由 `examples/local_app/export_state.py` 从可信本地资料导出，包内仅含拟合参数与归一化历史曲线，不含原始 benchmark 或最终成绩标签。
+单文件版 `Tsukushi-Windows-SingleFile-v0.3.10.exe` 内含同一模型状态，可直接运行；首次打开需要解包片刻。生成的图片与报表仍保存在本机用户目录。自定义说明仍可将 `说明.txt` 放在 exe 旁。
+
+开发者可用 `examples/local_app/build_windows.ps1 -StatePath <已导出的状态文件>` 重建 Windows 压缩包，添加 `-SingleFile` 可构建独立 exe。状态文件由 `examples/local_app/export_state.py` 从可信本地资料导出，包内仅含拟合参数与归一化历史曲线，不含原始 benchmark 或最终成绩标签。
 
 ## 分数究竟是什么？
 
