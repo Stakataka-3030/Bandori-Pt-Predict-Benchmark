@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.3.12"
+VERSION = "0.3.13"
 HOUR = 3_600_000
 MODEL_API_VERSION = "bandoribench-model-api-v1"
 MODEL_PHASES = ("development", "selection", "final", "all")

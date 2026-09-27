@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.13
+
+- Make the bottom update action visually prominent only when a newer Tsukushi Windows release is available. Keep the ordinary and failed-check states neutral.
+- Show a one-hour tracker-growth linear projection in all four tiers for forecasts within 24 hours of the event end; highlight it in the final three hours without changing Kaori or Aoi model fits.
+
 ## 0.3.12
 
 - Store Tsukushi's mutable model state and derived completed-event training samples separately from the Windows executable.

@@ -36,7 +36,7 @@ def render(snapshot: dict, output: Path, source: str) -> None:
                             wspace=.085, hspace=.12)
     axes = [fig.add_subplot(grid[i, 0]) for i in range(4)]
     bars = fig.add_subplot(grid[:, 1])
-    ink, purple, teal, gold = "#27323b", "#80669f", "#6da9a0", "#cda252"
+    ink, purple, teal, gold, red = "#27323b", "#80669f", "#6da9a0", "#cda252", "#a9433e"
     for i, (ax, tier) in enumerate(zip(axes, TIERS)):
         key = str(tier)
         history = snapshot["visible_history"][key]
@@ -54,6 +54,13 @@ def render(snapshot: dict, output: Path, source: str) -> None:
         ax.plot([_date(t) for t, _ in control_path],
                 [v / 10000 for _, v in control_path], color=purple,
                 linewidth=3.4, linestyle=(0, (7, 4)))
+        projection = snapshot.get("linear1h_paths", {}).get(key)
+        if projection:
+            ax.plot([_date(t) for t, _ in projection],
+                    [v / 10000 for _, v in projection], color=red,
+                    linewidth=3.6, linestyle=(0, (3, 3)), zorder=5)
+            ax.scatter([_date(end)], [projection[-1][1] / 10000],
+                       color=red, s=86, zorder=7)
         for value, color, size in ((snapshot["member_p10"][key], teal, 64),
                                    (snapshot["member_p90"][key], gold, 64),
                                    (snapshot["control"][key], purple, 78)):
@@ -63,14 +70,23 @@ def render(snapshot: dict, output: Path, source: str) -> None:
         ax.axvline(_date(snapshot["issued_at"]), color="#d4d9d4",
                    linewidth=1.2, linestyle=(0, (2, 4)))
         upper = max(snapshot["member_p90"][key],
+                    projection[-1][1] if projection else 0,
                     *(member["terminals"][key] for member in snapshot["members"]))
         ax.set_ylim(0, upper / 10000 * 1.13)
-        ax.set_xlim(_date(history[0]["time"]), _date(end + 5 * 3600000))
+        remaining = (end - snapshot["issued_at"]) / 3600000
+        if projection:
+            lookback = 6 if remaining <= 3 else 24
+            window_start = max(history[0]["time"], snapshot["issued_at"] - lookback * 3600000)
+            right_pad = 0.5 if remaining <= 3 else 1.0
+            ax.set_xlim(_date(window_start), _date(end + right_pad * 3600000))
+        else:
+            ax.set_xlim(_date(history[0]["time"]), _date(end + 5 * 3600000))
         ax.set_yticks([])
         ax.spines[["top", "right", "left"]].set_visible(False)
         ax.spines["bottom"].set_color("#d2d8d4")
         ax.text(.016, .84, f"T{tier}", transform=ax.transAxes,
-                fontsize=22, fontweight="bold", color=ink, va="top")
+                fontsize=22, fontweight="bold", color=ink, va="top", zorder=10,
+                bbox={"facecolor": "#ffffff", "edgecolor": "none", "pad": 3})
         if i < 3:
             ax.tick_params(axis="x", bottom=False, labelbottom=False)
         else:
@@ -78,31 +94,36 @@ def render(snapshot: dict, output: Path, source: str) -> None:
             ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M", tz=CN))
             ax.tick_params(axis="x", labelsize=12, colors="#53616a", pad=8)
     bars.set_facecolor("#ffffff")
-    bars.set_ylim(-.4, 15.2)
+    bars.set_ylim(-.2, 17.0)
     bars.set_xticks([])
     bars.set_yticks([])
     bars.spines[:].set_visible(False)
     largest = 0
     for i, tier in enumerate(TIERS):
         key = str(tier)
-        top = 13.4 - i * 3.65
+        top = 15.5 - i * 4.25
         bars.text(1, top + .82, f"T{tier}", fontsize=20,
                   fontweight="bold", color=ink, va="center")
-        for j, (label, value, color) in enumerate((
+        rows = [
                 ("10%", snapshot["member_p10"][key], teal),
                 ("kaori", snapshot["control"][key], purple),
-                ("90%", snapshot["member_p90"][key], gold))):
+                ("90%", snapshot["member_p90"][key], gold),
+        ]
+        projection = snapshot.get("linear1h", {}).get(key)
+        if projection is not None:
+            rows.append(("1h投影", projection, red))
+        for j, (label, value, color) in enumerate(rows):
             y = top - j * .83
             largest = max(largest, value)
             bars.text(1, y, label, va="center", fontsize=15,
                       fontweight="bold", color="#53616a")
-            bars.barh(y, value / 10000, left=55, height=.57,
+            bars.barh(y, value / 10000, left=72, height=.57,
                       color=color, alpha=.93)
-            bars.text(58 + value / 10000, y, f"{value / 10000:.1f}万",
+            bars.text(75 + value / 10000, y, f"{value / 10000:.1f}万",
                       va="center", fontsize=16, fontweight="bold", color=ink)
         if i < 3:
-            bars.axhline(top - 2.86, color="#e8eae6", linewidth=1)
-    bars.set_xlim(0, 55 + largest / 10000 * 1.23)
+            bars.axhline(top - 3.15, color="#e8eae6", linewidth=1)
+    bars.set_xlim(0, 72 + largest / 10000 * 1.23)
     fig.text(.055, .955, "tsukushi-aoi", ha="left", va="center",
              fontsize=36, fontweight="bold", color=ink)
     fig.text(.055, .905, f"#{snapshot['event_id']} · {source}", ha="left",
@@ -111,6 +132,14 @@ def render(snapshot: dict, output: Path, source: str) -> None:
              ha="right", va="center", fontsize=17, color="#59666d")
     fig.text(.985, .905, _date(snapshot["end_at"]).strftime("%Y-%m-%d %H:%M 终点"),
              ha="right", va="center", fontsize=17, color="#59666d")
+    if (snapshot["end_at"] - snapshot["issued_at"]) <= 3 * 3600000:
+        available = len(snapshot.get("linear1h", {})) == len(TIERS)
+        message = ("活动即将结束，请优先参考线性投影线" if available else
+                   "活动即将结束，线性投影线数据不足，请稍后刷新")
+        fig.text(.5, .85, message, ha="center", va="center", fontsize=18,
+                 fontweight="bold", color=red,
+                 bbox={"boxstyle": "round,pad=.55", "facecolor": "#fff1e9",
+                       "edgecolor": "#e8b7aa"})
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output, dpi=150, format="png", facecolor=fig.get_facecolor())
     plt.close(fig)
