@@ -1,6 +1,8 @@
 # Bandori PT Predict Benchmark
 
-**v0.3.9 · 新增 baseline registry 与全阶段 baseline-suite，统一固化现有模型的完整 benchmark 基准。**
+**v0.3.11 · 保留现有 baseline suite，新增基于已完成活动轨迹的实验性 50 成员预报与交互图。**
+
+项目自有源码采用 [MPL 2.0](LICENSE)，版权与素材边界见 [LICENSE_SCOPE.md](LICENSE_SCOPE.md)。
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
@@ -16,6 +18,16 @@ python bandoribench.py demo --out runs/demo
 ```
 
 `demo` 创建一个不可覆盖的合成 benchmark，执行全部基线并输出 `summary.json`。换一次参数，请换输出目录。
+
+实验性点预测 `tsukushi-kaori` 与 50 成员集合 `tsukushi-aoi` 见 [docs/member-ensemble.md](docs/member-ensemble.md)：kaori 在满六场已完成新制度活动后对 T500/T1500 的 12 小时终值做保守校准；aoi 使用已完成同制度活动的偏离轨迹生成成员线并逐报点更新权重。T1500 是辅助研究档位；aoi 的成员分位尚未校准，不参与 PointScore 排名。
+
+### Windows 本地预测器
+
+解压 `Tsukushi-Windows-v0.3.11.zip`，运行文件夹中的 `Tsukushi.exe`。应用在本机打开界面，默认读取 Bestdori，也可选 HHWX；活动开场满 3 小时后可按“预测”生成当前四档预测，有报表后按钮变为“刷新”，按“导出图片”保存完整图。初开场时数据量少，前 24 小时的预报主要供参考。应用不自动推送，也不需要帐号；读取实时档线和检查更新时需要联网。“说明”的正文可放在程序旁的 `说明.txt`。更新检查只在 GitHub 上有更新的 Tsukushi Windows 包时显示对应 Release 链接。
+
+单文件版 `Tsukushi-Windows-SingleFile-v0.3.11.exe` 内含同一模型状态，可直接运行；首次打开需要解包片刻。生成的图片与报表仍保存在本机用户目录。自定义说明仍可将 `说明.txt` 放在 exe 旁。程序启动时会自动检查一次更新；有新版时右下角显示“更新”并链接到对应 Release，无法连接时显示“检查更新失败”且可点击重试。
+
+开发者可用 `examples/local_app/build_windows.ps1 -StatePath <已导出的状态文件>` 重建 Windows 压缩包，添加 `-SingleFile` 可构建独立 exe。状态文件由 `examples/local_app/export_state.py` 从可信本地资料导出，包内仅含拟合参数与归一化历史曲线，不含原始 benchmark 或最终成绩标签。
 
 ## 分数究竟是什么？
 
