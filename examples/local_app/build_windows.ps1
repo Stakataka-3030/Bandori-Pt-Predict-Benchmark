@@ -35,11 +35,14 @@ try {
         @dataArgs `
         (Join-Path $PSScriptRoot "app.py")
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
+    $seedAsset = Join-Path $destination "Tsukushi-Seed-State-v$version.json"
+    Copy-Item -LiteralPath $state -Destination $seedAsset -Force
     if ($SingleFile) {
         $single = Join-Path $destination "Tsukushi-Windows-SingleFile-v$version.exe"
         Copy-Item -LiteralPath (Join-Path $destination "Tsukushi.exe") -Destination $single -Force
         Get-Item -LiteralPath $single | Select-Object FullName, Length
         Get-FileHash -LiteralPath $single -Algorithm SHA256
+        Get-FileHash -LiteralPath $seedAsset -Algorithm SHA256
         return
     }
     Copy-Item -LiteralPath $state -Destination (Join-Path $destination "Tsukushi\tsukushi-state.json")
@@ -48,6 +51,7 @@ try {
     Compress-Archive -LiteralPath (Join-Path $destination "Tsukushi") -DestinationPath $archive -Force
     Get-Item -LiteralPath $archive | Select-Object FullName, Length
     Get-FileHash -LiteralPath $archive -Algorithm SHA256
+    Get-FileHash -LiteralPath $seedAsset -Algorithm SHA256
 } finally {
     Pop-Location
 }

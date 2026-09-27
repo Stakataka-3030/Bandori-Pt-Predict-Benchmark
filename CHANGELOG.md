@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.12
+
+- Store Tsukushi's mutable model state and derived completed-event training samples separately from the Windows executable.
+- Check only completed CN events with stable post-end Bestdori cutoff observations, then add each event prequentially and rebuild the fit from the immutable seed plus new derived samples.
+- Add a one-shot state-sync command for scheduled environments and an automatic background check in the local app. Preserve the prior model when source observations or training samples fail validation.
+
 ## 0.3.11
 
 - License project-authored source code under MPL 2.0, with the supplied character icon and third-party data outside that grant.

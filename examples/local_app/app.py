@@ -25,7 +25,8 @@ if str(MODEL_DIR) not in sys.path:
     sys.path.insert(0, str(MODEL_DIR))
 from build_member_viewer import build as build_viewer  # noqa: E402
 from data_source import active_event_id, live_panel  # noqa: E402
-from engine import predict, read_state  # noqa: E402
+from engine import predict  # noqa: E402
+from training_state import load_or_create, sync_once  # noqa: E402
 
 REPORT_RE = re.compile(r"^/reports/(\d+-\d+)\.(json|html|png)$")
 RELEASE_API = "https://api.github.com/repos/Stakataka-3030/Bandori-Pt-Predict-Benchmark/releases?per_page=20"
@@ -91,6 +92,10 @@ def home_directory():
 
 
 def default_state_path():
+    return home_directory() / "model" / "tsukushi-state.json"
+
+
+def default_seed_path():
     if getattr(sys, "frozen", False):
         bundled = HERE / "tsukushi-state.json"
         return bundled if bundled.is_file() else Path(sys.executable).resolve().parent / "tsukushi-state.json"
@@ -110,13 +115,47 @@ def bundled_license_path():
 
 
 class LocalApp:
-    def __init__(self, state_path: Path, output_dir: Path):
+    def __init__(self, state_path: Path, output_dir: Path, seed_path: Path):
         self.state_path = state_path
+        self.seed_path = seed_path
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.state = read_state(state_path)
+        self.state, _, _ = load_or_create(state_path, seed_path)
         self.html = (HERE / "index.html").read_bytes()
         self.lock = threading.Lock()
+        self.sync_lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.training_status = {"status": "not_checked", "checked_at": None,
+                                "updated_event_ids": []}
+
+    def sync_training(self):
+        if not self.sync_lock.acquire(blocking=False):
+            return
+        self.training_status = {"status": "checking", "checked_at": int(time.time() * 1000),
+                                "updated_event_ids": []}
+        try:
+            result = sync_once(self.state_path, self.seed_path)
+            self.state = result["state"]
+            self.training_status = {
+                "status": result["status"], "checked_at": int(time.time() * 1000),
+                "updated_event_ids": result["updated_event_ids"],
+                "pending_event_id": result.get("event_id"),
+            }
+        except Exception:
+            details = traceback.format_exc()
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            with (self.state_path.parent / "training.log").open("a", encoding="utf-8") as log:
+                log.write(f"{int(time.time() * 1000)}\n{details}\n")
+            traceback.print_exc()
+            self.training_status = {"status": "error", "checked_at": int(time.time() * 1000),
+                                    "updated_event_ids": []}
+        finally:
+            self.sync_lock.release()
+
+    def periodic_sync(self):
+        while not self.stop_event.is_set():
+            self.sync_training()
+            self.stop_event.wait(3600)
 
     def generate(self, source, event_id):
         if source not in ("bestdori", "hhwx"):
@@ -130,14 +169,15 @@ class LocalApp:
             start = panel["tasks"][0]["start_at"]
             if issued - start < 3 * 3600000:
                 raise ValueError("活动开场未满 3 小时，暂不起报")
-            snapshot = predict(panel, self.state)
+            model_state = self.state
+            snapshot = predict(panel, model_state)
             report_id = f"{chosen}-{issued}"
             files = {ext: self.output_dir / f"{report_id}.{ext}"
                      for ext in ("json", "html", "png")}
             payload = {"event_id": chosen, "model_id": "tsukushi-aoi",
                        "control_model_id": "tsukushi-kaori", "source": source,
                        "source_urls": urls,
-                       "model_state_sha256": self.state["fit_sha256"],
+                       "model_state_sha256": model_state["fit_sha256"],
                        "generated_at": issued, "snapshots": [snapshot]}
             temp = {ext: path.with_suffix(path.suffix + ".tmp")
                     for ext, path in files.items()}
@@ -185,9 +225,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/icon.png":
             return self._send(200, (HERE / "icon.png").read_bytes(), "image/png")
         if path == "/api/health":
-            response = {"status": "ok", "model_ids": self.app.state["model_ids"],
-                        "training_cutoff_at": self.app.state["training_cutoff_at"],
-                        "state_sha256": self.app.state["fit_sha256"],
+            model_state = self.app.state
+            response = {"status": "ok", "model_ids": model_state["model_ids"],
+                        "training_cutoff_at": model_state["training_cutoff_at"],
+                        "state_sha256": model_state["fit_sha256"],
+                        "training_status": self.app.training_status,
                         "app_version": current_version()}
             return self._send(200, json.dumps(response).encode(), "application/json")
         if path == "/api/update":
@@ -224,6 +266,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(403, b"Forbidden", "text/plain")
         if self.path == "/api/quit":
             self._send(200, b'{"status":"stopping"}', "application/json")
+            self.app.stop_event.set()
             threading.Thread(target=self.server.shutdown, daemon=True).start()
             return
         if self.path != "/api/generate":
@@ -255,13 +298,27 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description="Run the Tsukushi local predictor")
     parser.add_argument("--state", type=Path, default=default_state_path())
+    parser.add_argument("--seed", type=Path, default=default_seed_path())
     parser.add_argument("--output", type=Path, default=home_directory() / "reports")
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--sync-state", action="store_true",
+                        help="update derived training samples and exit")
     parser.add_argument("--port", type=int, default=0)
     args = parser.parse_args()
-    application = LocalApp(args.state, args.output)
+    if args.sync_state:
+        result = sync_once(args.state, args.seed)
+        print(json.dumps({"status": result["status"],
+                          "updated_event_ids": result["updated_event_ids"],
+                          "pending_event_id": result.get("event_id"),
+                          "reason": result.get("reason"),
+                          "training_cutoff_at": result["state"]["training_cutoff_at"],
+                          "fit_sha256": result["state"]["fit_sha256"]},
+                         ensure_ascii=False), flush=True)
+        return
+    application = LocalApp(args.state, args.output, args.seed)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     server.app = application
+    threading.Thread(target=application.periodic_sync, daemon=True).start()
     url = f"http://127.0.0.1:{server.server_port}/"
     print(url, flush=True)
     if not args.no_browser:
