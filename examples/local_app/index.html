@@ -86,7 +86,7 @@ const $=id=>document.getElementById(id);
 const chinaTime=ms=>new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(ms));
 const points=n=>Math.round(n).toLocaleString('zh-CN')+' PT';
 function notice(text,error=false){$('notice').textContent=text;$('notice').classList.toggle('error',error)}
-async function health(){try{let r=await fetch('/api/health');let d=await r.json();$('model-state').textContent='模型：'+d.model_ids.control+' / '+d.model_ids.members+' · 已完成活动资料截至 '+chinaTime(d.training_cutoff_at)}catch(e){$('model-state').textContent='模型状态读取失败'}}
+async function health(){try{let r=await fetch('/api/health');let d=await r.json();let status=d.training_status||{};let training={not_checked:'待检查更新',checking:'正在检查已完成活动',up_to_date:'资料已同步',updated:'已更新活动 '+(status.updated_event_ids||[]).join('、'),pending_final:'等待活动 '+status.pending_event_id+' 收官数据',error:'资料更新暂不可用'}[status.status]||'资料状态未知';$('model-state').textContent='模型：'+d.model_ids.control+' / '+d.model_ids.members+' · 已完成活动资料截至 '+chinaTime(d.training_cutoff_at)+' · '+training}catch(e){$('model-state').textContent='模型状态读取失败'}}
 async function generate(){let button=$('refresh');button.disabled=true;button.textContent='生成中…';notice('正在读取四档最新档线并生成预测图。');try{
   let r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:$('source').value,event_id:$('event').value.trim()})});
   let d=await r.json();if(!r.ok)throw Error(d.error||'生成失败');
@@ -108,5 +108,6 @@ async function checkUpdate(automatic=false){let button=$('check-update');button.
 $('check-update').addEventListener('click',()=>{if(updateReleaseUrl){window.open(updateReleaseUrl,'_blank','noopener,noreferrer')}else{checkUpdate(false)}});
 $('close-update').addEventListener('click',()=>$('update-dialog').close());
 health();
+setInterval(health,60000);
 checkUpdate(true);
 </script></body></html>
