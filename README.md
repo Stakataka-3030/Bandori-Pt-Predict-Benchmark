@@ -1,6 +1,6 @@
 # Bandori PT Predict Benchmark
 
-**v0.3.9 · 新增 baseline registry 与全阶段 baseline-suite，统一固化现有模型的完整 benchmark 基准。**
+**v0.3.10 · 保留现有 baseline suite，新增基于已完成活动轨迹的实验性 50 成员预报与交互图。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
@@ -16,6 +16,8 @@ python bandoribench.py demo --out runs/demo
 ```
 
 `demo` 创建一个不可覆盖的合成 benchmark，执行全部基线并输出 `summary.json`。换一次参数，请换输出目录。
+
+实验性成员轨迹示例见 [docs/member-ensemble.md](docs/member-ensemble.md)：以新制度点预测为 control，使用已完成同制度活动的实际偏离轨迹生成 50 条成员线，逐报点更新权重；T1500 在此示例中作为辅助研究档位。成员分位尚未校准，不参与 baseline 排名。
 
 ## 分数究竟是什么？
 
