@@ -2,6 +2,7 @@
 
 ## 0.3.10
 
+- Add the local Windows Tsukushi app with Bestdori/HHWX source selection, four-tier member chart, image export, editable help slot, and version-aware GitHub Release checks. The distributable carries a derived model checkpoint rather than the raw benchmark.
 - Add `tsukushi-kaori` as the experimental deterministic point control and `tsukushi-aoi` as its 50-member trajectory ensemble built from completed new-regime event paths, with causal next-report weighting and no hand-inserted extreme members.
 - Add a self-contained interactive viewer with member lines, endpoint 10th/90th marks, grouped terminal bars, and an auxiliary T1500 new-regime view.
 - Add a gated, same-era 12-hour control correction for T500/T1500 after six completed new-regime events; preserve zero-shot and original development forecasts.

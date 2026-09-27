@@ -19,6 +19,12 @@ python bandoribench.py demo --out runs/demo
 
 实验性点预测 `tsukushi-kaori` 与 50 成员集合 `tsukushi-aoi` 见 [docs/member-ensemble.md](docs/member-ensemble.md)：kaori 在满六场已完成新制度活动后对 T500/T1500 的 12 小时终值做保守校准；aoi 使用已完成同制度活动的偏离轨迹生成成员线并逐报点更新权重。T1500 是辅助研究档位；aoi 的成员分位尚未校准，不参与 PointScore 排名。
 
+### Windows 本地预测器
+
+解压 `Tsukushi-Windows-v0.3.10.zip`，运行文件夹中的 `Tsukushi.exe`。应用在本机打开界面，默认读取 Bestdori，也可选 HHWX；活动开场满 3 小时后可按“刷新”生成当前四档预测，按“导出图片”保存完整图。初开场时数据量少，前 24 小时的预报主要供参考。应用不自动推送，也不需要帐号；读取实时档线和检查更新时需要联网。“说明”的正文可放在程序旁的 `说明.txt`。更新检查只在 GitHub 上有更新的 Tsukushi Windows 包时显示对应 Release 链接。
+
+开发者可用 `examples/local_app/build_windows.ps1 -StatePath <已导出的状态文件>` 重建 Windows 压缩包。状态文件由 `examples/local_app/export_state.py` 从可信本地资料导出，包内仅含拟合参数与归一化历史曲线，不含原始 benchmark 或最终成绩标签。
+
 ## 分数究竟是什么？
 
 **PointScore** 评估每个固定时点对最终档线的点预测；**ProbScore** 评估预测分位数，使用 WIS（加权区间评分）。两个赛道分别排名，不能把数值直接横比；点预测不会自动变成“有置信度的概率预测”。
