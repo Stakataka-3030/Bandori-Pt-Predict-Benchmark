@@ -25,7 +25,6 @@ if str(MODEL_DIR) not in sys.path:
 from build_member_viewer import build as build_viewer  # noqa: E402
 from data_source import active_event_id, live_panel  # noqa: E402
 from engine import predict, read_state  # noqa: E402
-from plot import render  # noqa: E402
 
 REPORT_RE = re.compile(r"^/reports/(\d+-\d+)\.(json|html|png)$")
 RELEASE_API = "https://api.github.com/repos/Stakataka-3030/Bandori-Pt-Predict-Benchmark/releases?per_page=20"
@@ -133,6 +132,7 @@ class LocalApp:
                                                separators=(",", ":")) + "\n",
                                     encoding="utf-8")
             build_viewer(temp["json"], temp["html"])
+            from plot import render  # Matplotlib is only needed by the packaged app.
             render(snapshot, temp["png"], "Bestdori" if source == "bestdori" else "HHWX")
             for ext in ("json", "html", "png"):
                 os.replace(temp[ext], files[ext])
