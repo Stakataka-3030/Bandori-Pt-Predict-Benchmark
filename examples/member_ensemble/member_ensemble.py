@@ -13,7 +13,7 @@ import statistics as st
 import sys
 
 from bandoribench_model import serve
-from ensemble import FixedEqualNewEra
+from calibrated_control import CalibratedControl
 
 N_MEMBERS = 50
 HORIZONS = (72, 48, 24, 12, 6)
@@ -53,13 +53,16 @@ def _weighted_quantile(pairs, quantile):
 
 class EmpiricalMemberEnsemble:
     model_id = "tsukushi"
-    model_version = "2026-09-27-empirical-1"
+    model_version = "2026-09-27-control-v2"
     training_cutoff_ms = 0
     supports_online_update = True
 
     def __init__(self):
         self.point_strategy = "control"
-        self.control = FixedEqualNewEra()
+        self.control = CalibratedControl(prior_strength=4,
+                                         adjusted_horizons=(12,),
+                                         adjusted_tiers=(500, 1500),
+                                         min_events=6)
         self.templates = {h: [] for h in HORIZONS}
         self.event_id = None
         self.members = []

@@ -1,8 +1,9 @@
 # Tsukushi: experimental 50-member trajectories
 
-This example lives under `examples/member_ensemble/`. It wraps an unchanged
-new-regime point control with 50 trajectory members. It does **not** replace
-the baseline registry, original CN-Core scoring tiers, or any frozen forecast.
+This example lives under `examples/member_ensemble/`. It wraps the established
+new-regime point model with a conservative, same-era online control correction
+and 50 trajectory members. It does **not** replace the baseline registry,
+original CN-Core scoring tiers, or any frozen forecast.
 
 ## Why the control is separate
 
@@ -25,26 +26,38 @@ new-regime events. The implementation never inserts arbitrary 0.05x/4x
 outliers or extends beyond its observed path envelope. With no completed
 same-era event it shows no learned spread: all members coincide with control.
 
+The revised control waits for **six completed new-regime events**. Thereafter,
+at the 12-hour origin only, it adjusts the remaining PT for T500 and T1500
+using the median of earlier completed events' prequential
+`actual_remaining / original_control_remaining` ratios, shrunk toward 1 with
+weight `n / (n + 4)`. T1000/T2000, all other origins, zero-shot forecasts,
+and old-regime fits remain unchanged. T1500 is computed as a separate
+auxiliary singleton panel so the canonical other-tier panel is preserved.
+
 Each new report reweights the *previously issued* paths against actual new
 tracker values with a robust likelihood, then re-anchors the remaining paths
 to the newly observed PT and updated control. Low-weight paths fade. The
 runner does not impose a fixed number of deleted and injected paths. The
 viewer archives each issued snapshot rather than rewriting old forecasts.
 
-The existing control panel T500/T1000/T2000 is preserved exactly. T1500 is
-an auxiliary new-regime research tier calculated separately, because its
-older historical coverage was insufficient for the canonical CN-Core panel.
-Adding it to the visualization does not revise earlier scores.
+T1500 is an auxiliary new-regime research tier, because its older historical
+coverage was insufficient for the canonical CN-Core panel. Adding it to the
+visualization does not revise earlier scores.
 
 ## Evidence and interpretation
 
-On the six new-regime development events, the example reproduced all 90
-control point forecasts exactly (PointScore **57.5145**). In a descriptive
+On the six new-regime development events, the six-event gate leaves all 90
+original point forecasts unchanged (PointScore **57.5145**). On the already
+inspected 322/323 events, the three-tier raw MAE changed from 169,901 to
+159,136 PT; this is **post-hoc research evidence**, not blind validation of
+the correction rule. A secondary 324 12-hour prediction was saved before
+event end for a prospective check; the originally issued 324 forecast was
+not changed. In a descriptive
 chronological audit across six later events after at least two prior
 new-regime events, member endpoint 10th–90th percentiles contained **77/120**
 tier × horizon outcomes; auxiliary T1500 was **15/30**. There are only six
 independent events in that audit. The member median had higher raw MAE than
-the control (341,189 versus 262,921 PT over those cases). Consequently:
+the revised control (343,738 versus 257,910 PT over those cases). Consequently:
 
 - The control is the point prediction.
 - The 10%/90% marks describe the current finite member set. They are not
