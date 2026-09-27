@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.11
+
+- License project-authored source code under MPL 2.0, with the supplied character icon and third-party data outside that grant.
+- Add the supplied in-app help, run a release check on startup, and display update or connection-failure status on the bottom button.
+- Remove the requested explanatory copy from the member viewer and display T1500 without an asterisk.
+
 ## 0.3.10
 
 - Add the local Windows Tsukushi app with Bestdori/HHWX source selection, four-tier member chart, image export, editable help slot, and version-aware GitHub Release checks. The distributable carries a derived model checkpoint rather than the raw benchmark.

@@ -103,6 +103,12 @@ def editable_help_path():
     return HERE / "说明.txt"
 
 
+def bundled_license_path():
+    if getattr(sys, "frozen", False):
+        return HERE / "LICENSE"
+    return HERE.parents[1] / "LICENSE"
+
+
 class LocalApp:
     def __init__(self, state_path: Path, output_dir: Path):
         self.state_path = state_path
@@ -192,9 +198,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(503, '{"error":"无法获取更新信息，请稍后重试"}'.encode("utf-8"),
                                   "application/json; charset=utf-8")
         if path == "/api/help":
-            path = editable_help_path()
-            body = path.read_bytes() if path.is_file() else "说明尚未添加。".encode("utf-8")
+            help_file = editable_help_path()
+            if not help_file.is_file():
+                help_file = HERE / "说明.txt"
+            body = help_file.read_bytes() if help_file.is_file() else "说明尚未添加。".encode("utf-8")
             return self._send(200, body, "text/plain; charset=utf-8")
+        if path == "/api/license":
+            return self._send(200, bundled_license_path().read_bytes(),
+                              "text/plain; charset=utf-8")
         match = report_request(self.path)
         if match:
             report_id, ext = match.groups()

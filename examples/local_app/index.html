@@ -50,7 +50,11 @@
     dialog::backdrop { background:#1e292aa0; }
     .dialog-head { display:flex; justify-content:space-between; align-items:center; }
     .dialog-head h2 { margin:3px 0 15px; }
-    #help-text { white-space:pre-wrap; line-height:1.75; color:#405057; max-height:58vh; overflow:auto; }
+    #help-text { line-height:1.75; color:#405057; max-height:58vh; overflow:auto; }
+    #help-text h3 { color:#283b34; font-size:18px; margin:20px 0 8px; }
+    #help-text h3:first-child { margin-top:0; }
+    #help-text p { margin:0 0 10px; white-space:pre-line; }
+    #help-text a { color:#246c4a; }
     #close-help { background:#edf4ed; color:#315c45; height:36px; }
     #close-update { background:#edf4ed; color:#315c45; height:36px; }
     #release-link { display:inline-block; padding:11px 15px; border-radius:9px; background:#36815e; color:white; text-decoration:none; font-weight:700; }
@@ -96,9 +100,13 @@ async function generate(){let button=$('refresh');button.disabled=true;button.te
 $('refresh').addEventListener('click',generate);
 $('event').addEventListener('keydown',e=>{if(e.key==='Enter')generate()});
 $('quit').addEventListener('click',async()=>{await fetch('/api/quit',{method:'POST'});notice('应用已退出，可以关闭此页面。');$('refresh').disabled=true});
-$('help').addEventListener('click',async()=>{try{let r=await fetch('/api/help');$('help-text').textContent=await r.text()}catch(e){$('help-text').textContent='说明尚未添加。'}$('help-dialog').showModal()});
+function renderHelp(raw){let root=$('help-text');root.replaceChildren();for(let block of raw.trim().split(/\n\s*\n/)){let heading=block.match(/^##\s*(.+)$/m);if(heading){let title=document.createElement('h3');title.textContent=heading[1];root.appendChild(title);block=block.replace(/^##[^\n]*(\n|$)/,'').trim()}if(!block)continue;let para=document.createElement('p');let parts=block.split(/(https:\/\/[^\s）]+)/g);for(let part of parts){if(part.startsWith('https://')){let link=document.createElement('a');link.href=part;link.target='_blank';link.rel='noopener noreferrer';link.textContent=part;para.appendChild(link)}else{para.appendChild(document.createTextNode(part))}}root.appendChild(para)}let license=document.createElement('a');license.href='/api/license';license.target='_blank';license.rel='noopener noreferrer';license.textContent='阅读 MPL 2.0 协议全文';root.appendChild(license)}
+$('help').addEventListener('click',async()=>{try{let r=await fetch('/api/help');if(!r.ok)throw Error('说明读取失败');renderHelp(await r.text())}catch(e){renderHelp('说明读取失败。')}$('help-dialog').showModal()});
 $('close-help').addEventListener('click',()=>$('help-dialog').close());
-$('check-update').addEventListener('click',async()=>{let button=$('check-update');button.disabled=true;button.textContent='检查中…';$('release-link').hidden=true;try{let r=await fetch('/api/update');let d=await r.json();if(!r.ok)throw Error(d.error||'检查失败');if(d.status==='update_available'){$('update-text').textContent='发现新版本 '+d.latest_version+'（当前 '+d.current_version+'）。';$('release-link').href=d.release_url;$('release-link').hidden=false}else if(d.status==='up_to_date'){$('update-text').textContent='当前已是最新版本（'+d.current_version+'）。'}else{$('update-text').textContent='目前还没有发布可供更新的 Tsukushi 安装包。'}}catch(e){$('update-text').textContent=e.message||String(e)}finally{button.disabled=false;button.textContent='检查更新';$('update-dialog').showModal()}});
+let updateReleaseUrl='';
+async function checkUpdate(automatic=false){let button=$('check-update');button.disabled=true;button.textContent='检查中…';$('release-link').hidden=true;try{let r=await fetch('/api/update');let d=await r.json();if(!r.ok)throw Error(d.error||'检查失败');if(d.status==='update_available'){updateReleaseUrl=d.release_url;button.textContent='更新';$('update-text').textContent='发现新版本 '+d.latest_version+'（当前 '+d.current_version+'）。';$('release-link').href=d.release_url;$('release-link').hidden=false}else{updateReleaseUrl='';button.textContent='检查更新';$('update-text').textContent=d.status==='up_to_date'?'当前已是最新版本（'+d.current_version+'）。':'目前还没有发布可供更新的 Tsukushi 安装包。'}}catch(e){updateReleaseUrl='';button.textContent='检查更新失败';$('update-text').textContent=e.message||String(e)}finally{button.disabled=false;if(!automatic)$('update-dialog').showModal()}}
+$('check-update').addEventListener('click',()=>{if(updateReleaseUrl){window.open(updateReleaseUrl,'_blank','noopener,noreferrer')}else{checkUpdate(false)}});
 $('close-update').addEventListener('click',()=>$('update-dialog').close());
 health();
+checkUpdate(true);
 </script></body></html>

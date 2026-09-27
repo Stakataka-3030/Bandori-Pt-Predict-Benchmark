@@ -20,6 +20,8 @@ try {
     $dataArgs = @(
         "--add-data", "$(Join-Path $PSScriptRoot 'index.html');examples/local_app",
         "--add-data", "$(Join-Path $PSScriptRoot 'icon.png');examples/local_app",
+        "--add-data", "$(Join-Path $PSScriptRoot '说明.txt');examples/local_app",
+        "--add-data", "$(Join-Path $repo 'LICENSE');examples/local_app",
         "--add-data", "$(Join-Path $repo 'examples/member_ensemble');examples/member_ensemble"
     )
     if ($SingleFile) {
