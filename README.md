@@ -1,6 +1,6 @@
 # Bandori PT Predict Benchmark
 
-**v0.3.8 · 将 CN 奖励制度切换提升为显式 regime-shift 评测语义，并拆分 final 的 zero-shot / adaptation 指标。**
+**v0.3.9 · 新增 baseline registry 与全阶段 baseline-suite，统一固化现有模型的完整 benchmark 基准。**
 
 针对 BanG Dream! GBP 活动排名档线：统一历史输入、预测时点、校准集、测试集和评分算法，输出可复现的 **0–100 分**，同时保留分档位、分提前量和分奖励制度的成绩。
 
@@ -110,6 +110,21 @@ HHWX 的两条投影按其公开源码窗口和线性外推公式重放，因此
 CARE-S / CARE-S2 与 causal-stack 的实现与训练边界见 [docs/CARE.md](docs/CARE.md)。`freeze-walkforward --tiers ...` 可以从一个采集了更多档位的数据集冻结公共子面板；这对 CN 很重要，因为 T1500 历史覆盖远少于 T500/T1000/T2000。显式日历使用 `bandoribench-calendar-v1`。CN 2019–2026 快照由仓库内置的国务院办公厅公告规则离线生成；`known_at` 控制公告可见时间，修订项再用 `previous_type` + `previous_known_at` 表示修订前已知安排，避免任何一层公告回灌到更早 hindcast。实现、来源和当前进度见 [Calendar provider](docs/CALENDAR_PROVIDER.md) 与 [Calendar progress](docs/CALENDAR_PROGRESS.md)。
 
 外部算法只需读取 `public/tasks.json` 并按 [提交协议](docs/SCORING.md) 写出 JSON，然后使用同一个 `score` 命令。不限定 Python、神经网络或统计模型。
+
+## Baseline registry 与基准套件
+
+在训练新模型前，建议先冻结现有模型基准面：
+
+```bash
+python bandoribench.py baseline-registry --out runs/baseline-registry.json
+python bandoribench.py baseline-suite runs/cn-core-v1 --out runs/cn-core-baselines.json
+```
+
+`baseline-suite` 对 registry 中每个 protocol-v2 内置模型统一跑 development / selection / final / all；支持概率输出的模型同时跑 Point 与 Prob。结果同时保存机器可比较的 summary 长表和完整 report（horizon/tier/era、whole-event bootstrap、final regime-shift diagnostics）。
+
+Registry 严格区分来源：Bestdori hierarchical 是**公开公式家族的因果重建**，不是历史线上预测档案；HHWX instant/24h 是公开公式 replay；Rinko/DPRA 是保存公开算法的 reconstruction；CARE/causal-stack 是本项目实验模型。
+
+外部模型的可回放性与历史真实性审计见 [Baseline registry / external replay audit](docs/BASELINE_REGISTRY.md)。当前优先级最高的外部适配候选是 MYCX Skeleton+KF；Bestdori 历史线上实绩仍需要时间戳化的 rates/prediction 快照，不能用今天的参数重算冒充。
 
 ## 外部训练模型接口
 

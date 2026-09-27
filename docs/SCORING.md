@@ -101,3 +101,10 @@ Report both case count and event count. Tier/horizon cases from one event are co
 The `era` field is a scoring/reporting stratum and a known model feature, not hidden truth. For CN, the benchmark distinguishes the legacy `voice1000` reward regime from the later `voice500_1500` regime using actual event chronology plus explicit corrections.
 
 A chronological final phase whose era is absent from every pre-final training/selection event is labeled `regime_shift_challenge`. Its one-shot central report may expose three aggregate scores: the first unseen-regime event (zero-shot), the later post-adaptation events, and the overall final score. These diagnostics must not be used for repeated model tuning.
+
+
+## Baseline suite
+
+`baseline-suite` is the canonical way to establish the comparison surface before training new models. It scores the built-in registry on the same frozen benchmark and the same development/selection/final/all phase definitions. The suite preserves both a compact summary and the full central-judge reports.
+
+Source labels are semantic constraints, not marketing names: a formula-family reconstruction (for example hierarchical Bestdori) must not be reported as an archived historical platform prediction; public-formula and preserved-algorithm replays are labeled separately.

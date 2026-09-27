@@ -18,10 +18,84 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.3.8"
+VERSION = "0.3.9"
 HOUR = 3_600_000
 MODEL_API_VERSION = "bandoribench-model-api-v1"
 MODEL_PHASES = ("development", "selection", "final", "all")
+BASELINE_REGISTRY = {
+    "persistence": {
+        "class": "weak_baseline",
+        "source_status": "native_baseline",
+        "tracks": ("point",),
+        "description": "Current cutoff held constant to event end.",
+    },
+    "linear24": {
+        "class": "weak_baseline",
+        "source_status": "native_baseline",
+        "tracks": ("point",),
+        "description": "Recent ~24h causal linear extrapolation.",
+    },
+    "calibrated-linear24": {
+        "class": "causal_statistical_baseline",
+        "source_status": "native_reconstruction",
+        "tracks": ("point",),
+        "description": "Linear24 plus median residual from only earlier completed events.",
+    },
+    "linear24-quantiles": {
+        "class": "causal_statistical_baseline",
+        "source_status": "native_reconstruction",
+        "tracks": ("point", "probabilistic"),
+        "description": "Causal residual-quantile extension of linear24.",
+    },
+    "bestdori-hierarchical": {
+        "class": "formula_family_reconstruction",
+        "source_status": "not_historical_platform_archive",
+        "tracks": ("point",),
+        "description": "Bestdori public formula-family replay with causal hierarchical rate estimation.",
+    },
+    "hhwx-instant": {
+        "class": "public_formula_replay",
+        "source_status": "strict_public_algorithm_replay",
+        "tracks": ("point",),
+        "description": "HHWX short-window public projection formula replay.",
+    },
+    "hhwx-24h": {
+        "class": "public_formula_replay",
+        "source_status": "strict_public_algorithm_replay",
+        "tracks": ("point",),
+        "description": "HHWX ~24h public projection formula replay.",
+    },
+    "rinko-dpra-replay": {
+        "class": "historical_algorithm_replay",
+        "source_status": "public_code_reconstruction",
+        "tracks": ("point",),
+        "description": "Reconstruction of the preserved Rinko/DPRA FIN algorithm.",
+    },
+    "multitier-analog-ensemble": {
+        "class": "project_statistical_model",
+        "source_status": "project_model",
+        "tracks": ("point", "probabilistic"),
+        "description": "Causal multi-tier analog retrieval ensemble.",
+    },
+    "care-s": {
+        "class": "project_experimental_model",
+        "source_status": "project_model",
+        "tracks": ("point", "probabilistic"),
+        "description": "CARE-S causal conditional correction model.",
+    },
+    "care-s2": {
+        "class": "project_experimental_model",
+        "source_status": "project_model",
+        "tracks": ("point", "probabilistic"),
+        "description": "CARE-S2 adaptive OOS-tuned correction model.",
+    },
+    "causal-stack": {
+        "class": "project_experimental_model",
+        "source_status": "project_model",
+        "tracks": ("point", "probabilistic"),
+        "description": "Causal OOS stack of multi-tier analog and hierarchical Bestdori.",
+    },
+}
 QUANTILES = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 TIERS = (1, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 1500,
          2000, 3000, 4000, 5000, 10000, 20000, 30000, 40000, 50000, 70000, 100000)
@@ -714,10 +788,7 @@ def _walkforward_bestdori_rate(public: dict, task: dict, shrink_k: float = 3.0) 
 
 
 def predict(public: dict, model: str = "linear24") -> dict:
-    models = ("linear24", "persistence", "calibrated-linear24", "linear24-quantiles",
-              "bestdori-recalibrated", "bestdori-hierarchical", "multitier-analog-ensemble",
-              "hhwx-instant", "hhwx-24h", "rinko-dpra-replay", "care-s", "care-s2",
-              "causal-stack")
+    models = set(BASELINE_REGISTRY) | {"bestdori-recalibrated"}
     if model not in models:
         raise ValueError("unknown baseline")
     v2 = public["protocol"]["schema"] == "bandoribench-protocol-v2"
@@ -1558,6 +1629,44 @@ def score_transform(loss: float) -> float:
     return 100.0 / (1.0 + loss)
 
 
+def _phase_regime_shift_diagnostics(report: dict, plan: dict, phase: str) -> dict | None:
+    if phase != "final" or not report.get("eligible"):
+        return None
+    regime = plan["regime_shift"]
+    if not regime.get("unseen_target_eras"):
+        return None
+    rows = list(report.get("case_losses", []))
+    first_shift = regime.get("first_unseen_regime_event_id")
+    diag = {
+        "role": regime["final_role"],
+        "source_era_counts": regime["source_era_counts"],
+        "target_era_counts": regime["target_era_counts"],
+        "unseen_target_eras": regime["unseen_target_eras"],
+        "first_new_regime_event_id": first_shift,
+        "overall_regime_shift_score": report["score"],
+    }
+    if first_shift is not None:
+        final_order = list(plan["phases"]["final"]["target_event_ids"])
+        first_index = final_order.index(first_shift)
+        first_rows = [row for row in rows if row["event_id"] == first_shift]
+        post_ids = final_order[first_index + 1:]
+        post_set = set(post_ids)
+        post_rows = [row for row in rows if row["event_id"] in post_set]
+        diag["first_new_regime_event_score"] = (
+            score_transform(macro(first_rows)) if first_rows else None
+        )
+        diag["post_adaptation_event_ids"] = post_ids
+        diag["post_adaptation_score"] = (
+            score_transform(macro(post_rows)) if post_rows else None
+        )
+        diag["note"] = (
+            "The first-new-regime score measures zero-shot transfer. "
+            "Post-adaptation covers later final events after the normal prequential "
+            "observe_event update has exposed earlier final truth."
+        )
+    return diag
+
+
 def evaluate(bundle: dict, submission: dict, track: str = "point", bootstrap: int = 200,
              case_ids: set[str] | None = None) -> dict:
     verify_bundle(bundle)
@@ -2084,37 +2193,8 @@ def run_model_api(bundle: dict, runner: list[str], phase: str = "development",
         plan["regime_shift"]["final_role"] if phase == "final" else phase
     )
 
-    if (phase == "final" and report["eligible"]
-            and plan["regime_shift"]["unseen_target_eras"]):
-        regime = plan["regime_shift"]
-        first_shift = regime.get("first_unseen_regime_event_id")
-        shift_diag = {
-            "role": regime["final_role"],
-            "source_era_counts": regime["source_era_counts"],
-            "target_era_counts": regime["target_era_counts"],
-            "unseen_target_eras": regime["unseen_target_eras"],
-            "first_new_regime_event_id": first_shift,
-            "overall_regime_shift_score": report["score"],
-        }
-        if first_shift is not None:
-            final_order = list(info["target_event_ids"])
-            first_index = final_order.index(first_shift)
-            first_rows = [row for row in rows if row["event_id"] == first_shift]
-            post_ids = final_order[first_index + 1:]
-            post_set = set(post_ids)
-            post_rows = [row for row in rows if row["event_id"] in post_set]
-            shift_diag["first_new_regime_event_score"] = (
-                score_transform(macro(first_rows)) if first_rows else None
-            )
-            shift_diag["post_adaptation_event_ids"] = post_ids
-            shift_diag["post_adaptation_score"] = (
-                score_transform(macro(post_rows)) if post_rows else None
-            )
-            shift_diag["note"] = (
-                "The first-new-regime score measures zero-shot transfer. "
-                "Post-adaptation covers later final events after the runner has observed "
-                "the first new-regime event truth through the normal prequential update."
-            )
+    shift_diag = _phase_regime_shift_diagnostics(report, plan, phase)
+    if shift_diag is not None:
         report["regime_shift_diagnostics"] = shift_diag
 
     if phase in ("selection", "final"):
@@ -2131,6 +2211,97 @@ def run_model_api(bundle: dict, runner: list[str], phase: str = "development",
     elif phase == "all":
         report["research_diagnostic_only"] = True
     return submission, report
+
+
+def baseline_registry() -> dict:
+    return {
+        name: {
+            **meta,
+            "tracks": list(meta["tracks"]),
+        }
+        for name, meta in BASELINE_REGISTRY.items()
+    }
+
+
+def baseline_suite(bundle: dict, bootstrap: int = 200,
+                   models: list[str] | None = None) -> dict:
+    """Run the frozen built-in baseline/model registry across every evaluation phase."""
+    verify_bundle(bundle)
+    if bundle["protocol"].get("schema") != "bandoribench-protocol-v2":
+        raise ValueError("baseline-suite requires protocol-v2")
+    selected = list(BASELINE_REGISTRY) if models is None else list(models)
+    if not selected or len(set(selected)) != len(selected):
+        raise ValueError("baseline-suite models must be a non-empty unique list")
+    unknown = [name for name in selected if name not in BASELINE_REGISTRY]
+    if unknown:
+        raise ValueError(f"unknown baseline-suite models: {unknown}")
+    if bootstrap < 0:
+        raise ValueError("invalid bootstrap count")
+
+    plan = model_evaluation_plan(bundle)
+    public = public_bundle(bundle)
+    detailed_reports = {}
+    rows = []
+    for model in selected:
+        submission = predict(public, model)
+        model_reports = {}
+        meta = BASELINE_REGISTRY[model]
+        for phase in MODEL_PHASES:
+            info = plan["phases"][phase]
+            if not info["case_ids"]:
+                continue
+            phase_reports = {}
+            selected_cases = set(info["case_ids"])
+            phase_submission = {
+                **submission,
+                "predictions": [
+                    row for row in submission["predictions"]
+                    if row.get("case_id") in selected_cases
+                ],
+            }
+            for track in meta["tracks"]:
+                report = evaluate(bundle, phase_submission, track, bootstrap, selected_cases)
+                report["evaluation_phase"] = phase
+                report["evaluation_role"] = (
+                    plan["regime_shift"]["final_role"] if phase == "final" else phase
+                )
+                shift_diag = _phase_regime_shift_diagnostics(report, plan, phase)
+                if shift_diag is not None:
+                    report["regime_shift_diagnostics"] = shift_diag
+                phase_reports[track] = report
+                rows.append({
+                    "model_id": model,
+                    "model_class": meta["class"],
+                    "source_status": meta["source_status"],
+                    "phase": phase,
+                    "evaluation_role": report["evaluation_role"],
+                    "track": track,
+                    "eligible": report["eligible"],
+                    "score": report["score"],
+                    "coverage": report["coverage"],
+                    "n_cases": report["n_expected"],
+                    "n_events": report["n_events_expected"],
+                    "event_bootstrap_95_interval": report.get("event_bootstrap_95_interval"),
+                    "by_horizon_hours": report.get("by_horizon_hours"),
+                    "by_tier": report.get("by_tier"),
+                    "by_era": report.get("by_era"),
+                    "regime_shift_diagnostics": report.get("regime_shift_diagnostics"),
+                })
+            model_reports[phase] = phase_reports
+        detailed_reports[model] = model_reports
+
+    body = {
+        "schema": "bandoribench-baseline-suite-v1",
+        "software_version": VERSION,
+        "benchmark_id": bundle["benchmark_id"],
+        "registry": baseline_registry(),
+        "evaluation_plan": plan,
+        "bootstrap": bootstrap,
+        "summary": rows,
+        "reports": detailed_reports,
+    }
+    body["suite_id"] = digest(body)
+    return body
 
 
 def server_value(meta: dict, field: str, server: str) -> int:
@@ -2411,13 +2582,17 @@ def main(argv: list[str] | None = None) -> int:
     me.add_argument("--development-blocks", type=int, default=5)
     me.add_argument("--submission-out")
     me.add_argument("--out", required=True)
+    br = commands.add_parser("baseline-registry", help="print metadata for built-in benchmark baselines/models")
+    br.add_argument("--out")
+    bs = commands.add_parser("baseline-suite", help="run built-in baseline/model registry across model-evaluation phases")
+    bs.add_argument("benchmark", help="frozen benchmark directory or private/benchmark.json")
+    bs.add_argument("--bootstrap", type=int, default=200)
+    bs.add_argument("--models", nargs="+", choices=tuple(BASELINE_REGISTRY))
+    bs.add_argument("--out", required=True)
     p = commands.add_parser("predict", help="run a bundled baseline using public inputs only")
     p.add_argument("tasks")
-    p.add_argument("--model", choices=("linear24", "persistence", "calibrated-linear24",
-                                      "linear24-quantiles", "bestdori-recalibrated",
-                                      "bestdori-hierarchical", "multitier-analog-ensemble",
-                                      "hhwx-instant", "hhwx-24h", "rinko-dpra-replay",
-                                      "care-s", "care-s2", "causal-stack"), default="linear24")
+    p.add_argument("--model", choices=tuple(BASELINE_REGISTRY) + ("bestdori-recalibrated",),
+                   default="linear24")
     p.add_argument("--out", required=True)
     s = commands.add_parser("score", help="score an external or bundled submission")
     s.add_argument("benchmark")
@@ -2492,6 +2667,21 @@ def main(argv: list[str] | None = None) -> int:
                               "protocol_eligible": report["model_api"]["protocol_eligible"],
                               "score": report["score"], "coverage": report["coverage"]}))
             return 0 if report["model_api"]["protocol_eligible"] else 2
+        elif args.command == "baseline-registry":
+            registry = baseline_registry()
+            if args.out:
+                save(args.out, registry)
+            print(json.dumps(registry, ensure_ascii=False, indent=2))
+        elif args.command == "baseline-suite":
+            bundle = load(_benchmark_path(args.benchmark))
+            suite = baseline_suite(bundle, args.bootstrap, args.models)
+            save(args.out, suite)
+            print(json.dumps({
+                "suite_id": suite["suite_id"],
+                "benchmark_id": suite["benchmark_id"],
+                "models": len(suite["reports"]),
+                "rows": len(suite["summary"]),
+            }))
         elif args.command == "predict":
             save(args.out, predict(load(args.tasks), args.model))
         elif args.command == "score":
