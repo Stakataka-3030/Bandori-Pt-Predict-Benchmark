@@ -791,6 +791,38 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(len(report["temporal_checkpoints"]), 5)
         self.assertTrue(all(row["n_cases"] > 0 for row in report["temporal_checkpoints"]))
 
+    def test_baseline_registry_separates_replay_provenance_classes(self):
+        registry = b.baseline_registry()
+        self.assertEqual(registry["bestdori-hierarchical"]["class"],
+                         "formula_family_reconstruction")
+        self.assertEqual(registry["bestdori-hierarchical"]["source_status"],
+                         "not_historical_platform_archive")
+        self.assertEqual(registry["hhwx-instant"]["source_status"],
+                         "strict_public_algorithm_replay")
+        self.assertEqual(registry["rinko-dpra-replay"]["class"],
+                         "historical_algorithm_replay")
+        self.assertIn("probabilistic", registry["causal-stack"]["tracks"])
+
+    def test_baseline_suite_scores_all_phases_and_tracks(self):
+        bundle = b.freeze_walkforward(self.data, 8)
+        suite = b.baseline_suite(
+            bundle,
+            bootstrap=0,
+            models=["persistence", "linear24-quantiles", "bestdori-hierarchical"],
+        )
+        self.assertEqual(suite["schema"], "bandoribench-baseline-suite-v1")
+        self.assertEqual(set(suite["reports"]),
+                         {"persistence", "linear24-quantiles", "bestdori-hierarchical"})
+        rows = suite["summary"]
+        self.assertEqual(len(rows), 16)  # 4 + 8 + 4 phase/track rows.
+        self.assertTrue(all(row["eligible"] for row in rows))
+        self.assertTrue(all(row["n_events"] > 0 for row in rows))
+        self.assertTrue(all(row["n_cases"] >= row["n_events"] for row in rows))
+        self.assertEqual(
+            {row["track"] for row in rows if row["model_id"] == "linear24-quantiles"},
+            {"point", "probabilistic"},
+        )
+
     def test_model_plan_marks_unseen_final_era_as_regime_shift(self):
         data = copy.deepcopy(self.data)
         for event in data["events"]:

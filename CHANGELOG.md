@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.9
+
+- Add a typed baseline registry distinguishing native baselines, public-formula replays, historical-algorithm reconstructions, formula-family reconstructions, and project experimental models.
+- Add `baseline-registry` and `baseline-suite`; the suite runs every selected built-in protocol-v2 model across development / selection / final / all, with both point and probabilistic tracks when supported.
+- Persist a machine-comparable summary plus full detailed phase reports including horizon/tier/era breakdowns, whole-event bootstrap intervals, and final regime-shift diagnostics.
+- Explicitly mark `bestdori-hierarchical` as a formula-family reconstruction rather than a historical Bestdori platform forecast archive.
+- Add an external replay audit covering Bestdori, HHWX, Rinko/DPRA, MYCX, Tsugu and Mokabot, including provenance limits and the next integration order.
+
 ## 0.3.8
 
 - Make reward-era composition explicit in every model-evaluation phase via target and initial-training era counts.
