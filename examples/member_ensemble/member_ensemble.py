@@ -52,7 +52,7 @@ def _weighted_quantile(pairs, quantile):
 
 
 class EmpiricalMemberEnsemble:
-    model_id = "tsukushi"
+    model_id = "tsukushi-aoi"
     model_version = "2026-09-27-control-v2"
     training_cutoff_ms = 0
     supports_online_update = True

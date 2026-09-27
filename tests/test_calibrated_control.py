@@ -64,6 +64,7 @@ class CalibratedControlTests(unittest.TestCase):
 
     def test_six_completed_new_era_events_gate_the_correction(self):
         model = self.make()
+        self.assertEqual(model.model_id, "tsukushi-kaori")
         model.observe_event(completed(1, "voice1000"))
         self.assertEqual(len(model.ratios[(500, 12)]), 0)
         for event_id in range(2, 8):

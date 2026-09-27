@@ -17,7 +17,7 @@ python bandoribench.py demo --out runs/demo
 
 `demo` 创建一个不可覆盖的合成 benchmark，执行全部基线并输出 `summary.json`。换一次参数，请换输出目录。
 
-实验性模型 Tsukushi 见 [docs/member-ensemble.md](docs/member-ensemble.md)：以新制度点预测为 control，满六场已完成新制度活动后对 T500/T1500 的 12 小时终值做保守校准，再用已完成同制度活动的偏离轨迹生成 50 条成员线并逐报点更新权重。T1500 是辅助研究档位；成员分位尚未校准，不参与 baseline 排名。
+实验性点预测 `tsukushi-kaori` 与 50 成员集合 `tsukushi-aoi` 见 [docs/member-ensemble.md](docs/member-ensemble.md)：kaori 在满六场已完成新制度活动后对 T500/T1500 的 12 小时终值做保守校准；aoi 使用已完成同制度活动的偏离轨迹生成成员线并逐报点更新权重。T1500 是辅助研究档位；aoi 的成员分位尚未校准，不参与 PointScore 排名。
 
 ## 分数究竟是什么？
 

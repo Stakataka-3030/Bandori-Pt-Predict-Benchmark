@@ -17,13 +17,13 @@ HOUR = 3600000
 
 
 class CalibratedControl:
-    model_id = "tsukushi-ctrl-v2-research"
+    model_id = "tsukushi-kaori"
     model_version = "2026-09-27-prequential-1"
     training_cutoff_ms = 0
     supports_online_update = True
 
-    def __init__(self, prior_strength=4.0, adjusted_horizons=(24, 12, 6),
-                 adjusted_tiers=(500, 1500), min_events=0):
+    def __init__(self, prior_strength=4.0, adjusted_horizons=(12,),
+                 adjusted_tiers=(500, 1500), min_events=6):
         self.base = FixedEqualNewEra()
         self.prior_strength = float(prior_strength)
         self.adjusted_horizons = tuple(adjusted_horizons)
@@ -120,7 +120,7 @@ class CalibratedControl:
 
 if __name__ == "__main__":
     prior = float(sys.argv[sys.argv.index("--prior") + 1]) if "--prior" in sys.argv else 4.0
-    horizons = tuple(int(v) for v in sys.argv[sys.argv.index("--horizons") + 1].split(",")) if "--horizons" in sys.argv else (24, 12, 6)
-    min_events = int(sys.argv[sys.argv.index("--min-events") + 1]) if "--min-events" in sys.argv else 0
+    horizons = tuple(int(v) for v in sys.argv[sys.argv.index("--horizons") + 1].split(",")) if "--horizons" in sys.argv else (12,)
+    min_events = int(sys.argv[sys.argv.index("--min-events") + 1]) if "--min-events" in sys.argv else 6
     serve(CalibratedControl(prior_strength=prior, adjusted_horizons=horizons,
                             min_events=min_events))

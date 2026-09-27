@@ -1,13 +1,14 @@
-# Tsukushi: experimental 50-member trajectories
+# tsukushi-kaori and tsukushi-aoi
 
-This example lives under `examples/member_ensemble/`. It wraps the established
-new-regime point model with a conservative, same-era online control correction
-and 50 trajectory members. It does **not** replace the baseline registry,
+This example lives under `examples/member_ensemble/`. `tsukushi-kaori` is the
+deterministic point control; `tsukushi-aoi` is its 50-member trajectory
+ensemble. Kaori wraps the established new-regime point model with a
+conservative same-era online correction. It does **not** replace the baseline registry,
 original CN-Core scoring tiers, or any frozen forecast.
 
 ## Why the control is separate
 
-The control remains the scored point forecast. For each origin it supplies a
+Kaori remains the scored point forecast. For each origin it supplies a
 terminal PT value `C`; the latest visible tracker supplies `Y`. A completed
 new-regime event is first predicted by the control using only earlier events.
 Only after that event finishes, its actual remaining trajectory is saved in
@@ -59,7 +60,8 @@ tier × horizon outcomes; auxiliary T1500 was **15/30**. There are only six
 independent events in that audit. The member median had higher raw MAE than
 the revised control (343,738 versus 257,910 PT over those cases). Consequently:
 
-- The control is the point prediction.
+- Kaori is the point prediction. Aoi needs a separate proper distribution
+  score before it can appear as another ranked model.
 - The 10%/90% marks describe the current finite member set. They are not
   calibrated probabilities or a verified 80% interval.
 - Outlying paths trace back to completed event trajectories. Fifty lines do

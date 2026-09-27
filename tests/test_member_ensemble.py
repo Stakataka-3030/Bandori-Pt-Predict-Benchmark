@@ -59,6 +59,7 @@ class EmpiricalMemberTests(unittest.TestCase):
 
     def test_zero_event_has_no_invented_spread(self):
         model = self.make()
+        self.assertEqual(model.model_id, "tsukushi-aoi")
         model.predict_panel(panel(200 * HOUR, {500: 100000, 1000: 60000, 2000: 40000}))
         snap = model.last_snapshot
         self.assertEqual(snap["diagnostics"]["template_count"], 0)
