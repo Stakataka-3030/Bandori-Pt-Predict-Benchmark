@@ -2,7 +2,7 @@
 
 ## 0.3.10
 
-- Add an experimental control-anchored 50-member trajectory runner built from completed new-regime event paths, with causal next-report weighting and no hand-inserted extreme members.
+- Add Tsukushi, an experimental control-anchored 50-member trajectory runner built from completed new-regime event paths, with causal next-report weighting and no hand-inserted extreme members.
 - Add a self-contained interactive viewer with member lines, endpoint 10th/90th marks, grouped terminal bars, and an auxiliary T1500 new-regime view.
 - Preserve the canonical baseline registry, scoring tiers, frozen benchmarks, and point control output. Document that member percentiles are not calibrated probabilities.
 

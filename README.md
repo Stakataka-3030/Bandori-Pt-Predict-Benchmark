@@ -17,7 +17,7 @@ python bandoribench.py demo --out runs/demo
 
 `demo` 创建一个不可覆盖的合成 benchmark，执行全部基线并输出 `summary.json`。换一次参数，请换输出目录。
 
-实验性成员轨迹示例见 [docs/member-ensemble.md](docs/member-ensemble.md)：以新制度点预测为 control，使用已完成同制度活动的实际偏离轨迹生成 50 条成员线，逐报点更新权重；T1500 在此示例中作为辅助研究档位。成员分位尚未校准，不参与 baseline 排名。
+实验性模型 Tsukushi 见 [docs/member-ensemble.md](docs/member-ensemble.md)：以新制度点预测为 control，使用已完成同制度活动的实际偏离轨迹生成 50 条成员线，逐报点更新权重；T1500 在此示例中作为辅助研究档位。成员分位尚未校准，不参与 baseline 排名。
 
 ## 分数究竟是什么？
 

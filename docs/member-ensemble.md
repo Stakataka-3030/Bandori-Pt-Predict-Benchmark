@@ -1,4 +1,4 @@
-# Experimental 50-member trajectories
+# Tsukushi: experimental 50-member trajectories
 
 This example lives under `examples/member_ensemble/`. It wraps an unchanged
 new-regime point control with 50 trajectory members. It does **not** replace
