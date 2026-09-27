@@ -194,6 +194,7 @@ class LocalApp:
                     "mode": snapshot["forecast_mode"],
                     "remaining_hours": (snapshot["end_at"] - issued) / 3600000,
                     "control": snapshot["control"],
+                    "linear1h": snapshot["linear1h"],
                     "p10": snapshot["member_p10"],
                     "p90": snapshot["member_p90"],
                     "latest_tracker_at": {str(t["tier"]): t["history"][-1]["time"]

@@ -41,6 +41,37 @@ def _quantile(pairs, q):
     return ordered[-1][0]
 
 
+def one_hour_projection(history, issued_at, end_at):
+    """Project the latest visible PT using its exact preceding hour of growth."""
+    visible = sorted((p for p in history
+                      if int(p["time"]) <= issued_at
+                      and int(p.get("available_at", p["time"])) <= issued_at),
+                     key=lambda p: p["time"])
+    if len(visible) < 2:
+        return None
+    latest = visible[-1]
+    last_time = int(latest["time"])
+    if last_time >= end_at or issued_at - last_time > HOUR:
+        return None
+    boundary = last_time - HOUR
+    before = next((p for p in reversed(visible) if int(p["time"]) <= boundary), None)
+    after = next((p for p in visible if int(p["time"]) >= boundary), None)
+    if before is None or after is None:
+        return None
+    ta, tb = int(before["time"]), int(after["time"])
+    value = (float(before["ep"]) if ta == tb else
+             float(before["ep"]) + (float(after["ep"]) - float(before["ep"]))
+             * (boundary - ta) / (tb - ta))
+    current = float(latest["ep"])
+    if current < value:
+        return None
+    growth_per_hour = current - value
+    terminal = current + growth_per_hour * (end_at - last_time) / HOUR
+    return {"terminal": terminal, "growth_per_hour": growth_per_hour,
+            "basis_from": boundary, "basis_to": last_time,
+            "path": [[last_time, current], [end_at, terminal]]}
+
+
 def read_state(path: Path):
     state = json.loads(path.read_text(encoding="utf-8"))
     if state.get("schema") != "tsukushi-local-state-v1":
@@ -195,4 +226,18 @@ def predict(panel, state):
         snapshot["nearest_evaluated_horizon_hours"] = nearest
     snapshot["visible_history"] = {str(t["tier"]): list(t["history"])
                                    for t in panel["tasks"]}
+    snapshot["linear1h"] = {}
+    snapshot["linear1h_paths"] = {}
+    snapshot["linear1h_details"] = {}
+    if remaining <= 24:
+        issue = int(panel["tasks"][0]["issued_at"])
+        end = int(panel["tasks"][0]["end_at"])
+        for task in panel["tasks"]:
+            projection = one_hour_projection(task["history"], issue, end)
+            if projection is not None:
+                tier = int(task["tier"])
+                snapshot["linear1h"][tier] = projection["terminal"]
+                snapshot["linear1h_paths"][tier] = projection["path"]
+                snapshot["linear1h_details"][tier] = {
+                    key: projection[key] for key in ("growth_per_hour", "basis_from", "basis_to")}
     return snapshot
