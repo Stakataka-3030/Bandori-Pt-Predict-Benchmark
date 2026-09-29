@@ -202,14 +202,100 @@ def _early_snapshot(panel, state):
             "forecast_mode": "early_progress"}
 
 
-def predict(panel, state):
+def _rui_snapshot(panel, state):
+    """Replay visible reports and update one fixed set of member identities."""
+    tasks = panel["tasks"]
+    issue = int(tasks[0]["issued_at"])
+    start, end = int(tasks[0]["start_at"]), int(tasks[0]["end_at"])
+    first = start + 3 * HOUR
+    if issue < first:
+        raise ValueError("活动开场未满 3 小时，暂不起报")
+    checkpoints = list(range(first, issue, 3 * HOUR))
+    checkpoints.extend(range(max(first, end - 24 * HOUR), issue, HOUR))
+    checkpoints.append(issue)
+    checkpoints = sorted(set(checkpoints))
+    previous = None
+    fixed_state = None
+    replayed = 0
+    for at in checkpoints:
+        visible_tasks = []
+        for task in tasks:
+            points = [p for p in task["history"]
+                      if int(p["time"]) <= at
+                      and int(p.get("available_at", p["time"])) <= at]
+            if not points:
+                break
+            visible_tasks.append(dict(task, history=points, issued_at=at,
+                                      input_cutoff_at=points[-1]["time"]))
+        if len(visible_tasks) != len(tasks):
+            continue
+        visible_panel = dict(panel, tasks=visible_tasks)
+        if fixed_state is None:
+            progress = (at - start) / (end - start)
+            families = [family for family in state["fit"]["early_progress_paths"]
+                        if all((_linear(family["paths"][str(tier)], progress) or 0) > 0
+                               for tier in TIERS)]
+            if len(families) < 3:
+                continue
+            fixed_state = dict(state, fit=dict(state["fit"],
+                                             early_progress_paths=families))
+        snapshot = _early_snapshot(visible_panel, fixed_state)
+        if previous is not None:
+            log_weights = []
+            for member in previous["members"]:
+                penalties = []
+                for tier in TIERS:
+                    actual = snapshot["current"][tier]
+                    expected = _linear(member["paths"][str(tier)], at)
+                    sigma = max(1000.0, 0.025 * actual)
+                    z = (actual - expected) / sigma
+                    penalties.append(2.0 * math.log1p(z * z / 3.0))
+                log_weights.append(math.log(max(member["weight"], 1e-12))
+                                   - st.mean(penalties))
+            peak = max(log_weights)
+            weights = [math.exp(value - peak) for value in log_weights]
+            total = sum(weights)
+            for old, new, value in zip(previous["members"], snapshot["members"], weights):
+                if old["member_id"] != new["member_id"] or old["source_event_ids"] != new["source_event_ids"]:
+                    raise ValueError("Rui member identity changed during replay")
+                new["weight"] = 0.98 * value / total + 0.02 / len(weights)
+            replayed += 1
+        members = snapshot["members"]
+        for q, field in ((.1, "member_p10"), (.5, "member_median"),
+                         (.9, "member_p90")):
+            snapshot[field] = {tier: _quantile(
+                [(m["terminals"][str(tier)], m["weight"]) for m in members], q)
+                for tier in TIERS}
+        snapshot["control"] = dict(snapshot["member_median"])
+        snapshot["control_paths"] = {
+            str(tier): [[members[0]["paths"][str(tier)][step][0],
+                         _quantile([(m["paths"][str(tier)][step][1], m["weight"])
+                                    for m in members], .5)]
+                        for step in range(33)] for tier in TIERS}
+        ess = 1.0 / sum(m["weight"] ** 2 for m in members)
+        snapshot["diagnostics"].update(
+            assimilated=replayed > 0, prior_ess=ess,
+            soft_pruned=sum(m["weight"] < 0.2 / len(members) for m in members),
+            replayed_reports=replayed)
+        previous = snapshot
+    if previous is None:
+        raise ValueError("早期历史样本不足，Rui 暂无法起报")
+    previous["forecast_mode"] = "sequential_pruning"
+    return previous
+
+
+def predict(panel, state, mode="mashiro"):
+    if mode not in ("mashiro", "rui"):
+        raise ValueError("unknown forecast mode")
     remaining = (int(panel["tasks"][0]["end_at"])
                  - int(panel["tasks"][0]["issued_at"])) / HOUR
     if remaining <= 0:
         raise ValueError("活动已经结束")
     if any(int(t["tier"]) not in TIERS for t in panel["tasks"]):
         raise ValueError("unsupported tier")
-    if remaining > 72:
+    if mode == "rui":
+        snapshot = _rui_snapshot(panel, state)
+    elif remaining > 72:
         snapshot = _early_snapshot(panel, state)
     else:
         nearest = min(HORIZONS, key=lambda h: abs(h - remaining))
@@ -224,8 +310,12 @@ def predict(panel, state):
         snapshot["horizon_hours"] = remaining
         snapshot["forecast_mode"] = "evaluated_horizon_family"
         snapshot["nearest_evaluated_horizon_hours"] = nearest
-    snapshot["visible_history"] = {str(t["tier"]): list(t["history"])
-                                   for t in panel["tasks"]}
+    snapshot["visible_history"] = {
+        str(t["tier"]): [p for p in t["history"]
+                          if int(p["time"]) <= int(t["issued_at"])
+                          and int(p.get("available_at", p["time"])) <= int(t["issued_at"])]
+        for t in panel["tasks"]}
+    snapshot["logic_mode"] = "Rui" if mode == "rui" else "Mashiro"
     snapshot["linear1h"] = {}
     snapshot["linear1h_paths"] = {}
     snapshot["linear1h_details"] = {}

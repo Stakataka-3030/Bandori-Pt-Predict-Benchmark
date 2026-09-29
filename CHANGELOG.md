@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.14
+
+- Add a Mashiro / Rui mode slider to the local forecast app. Mashiro retains the previous forecast calculation.
+- Rui builds a fixed 50-member set at the first usable early report, replays visible checkpoints in chronological order, reduces weights after each new observation, and uses the weighted member median as its main line.
+- Keep the Kaori/Aoi service identities in both modes and show Mashiro/Rui only as a logic badge; preserve causal input cutoffs and the one-hour endgame projection.
+
 ## 0.3.13
 
 - Make the bottom update action visually prominent only when a newer Tsukushi Windows release is available. Keep the ordinary and failed-check states neutral.

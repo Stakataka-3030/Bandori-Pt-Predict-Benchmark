@@ -128,10 +128,14 @@ def render(snapshot: dict, output: Path, source: str) -> None:
              fontsize=36, fontweight="bold", color=ink)
     fig.text(.055, .905, f"#{snapshot['event_id']} · {source}", ha="left",
              va="center", fontsize=24, fontweight="bold", color="#59666d")
-    fig.text(.985, .955, _date(snapshot["issued_at"]).strftime("%Y-%m-%d %H:%M 起报"),
+    fig.text(.985, .930, _date(snapshot["issued_at"]).strftime("%Y-%m-%d %H:%M 起报"),
              ha="right", va="center", fontsize=17, color="#59666d")
-    fig.text(.985, .905, _date(snapshot["end_at"]).strftime("%Y-%m-%d %H:%M 终点"),
+    fig.text(.985, .885, _date(snapshot["end_at"]).strftime("%Y-%m-%d %H:%M 终点"),
              ha="right", va="center", fontsize=17, color="#59666d")
+    fig.text(.985, .987, snapshot.get("logic_mode", "Mashiro"),
+             ha="right", va="top", fontsize=14, fontweight="bold", color="#426e4d",
+             bbox={"boxstyle": "round,pad=.35", "facecolor": "#e6f1e7",
+                   "edgecolor": "#cbdacc"})
     if (snapshot["end_at"] - snapshot["issued_at"]) <= 3 * 3600000:
         available = len(snapshot.get("linear1h", {})) == len(TIERS)
         message = ("活动即将结束，请优先参考线性投影线" if available else
