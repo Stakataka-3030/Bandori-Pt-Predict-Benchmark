@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.15
+
+- Constrain published four-tier forecasts to T500 >= T1000 >= T1500 >= T2000 without refitting Mashiro or Rui.
+- Preserve the original control and member terminal forecasts in each report for audit; update the control paths, all 50 member paths and their quantiles, and the one-hour projection when needed.
+- Prefer the existing primary-tier values and clamp auxiliary T1500 between T1000 and T2000. Use an isotonic fallback only if the primary tiers themselves cross.
+
 ## 0.3.14
 
 - Add a Mashiro / Rui mode slider to the local forecast app. Mashiro retains the previous forecast calculation.
