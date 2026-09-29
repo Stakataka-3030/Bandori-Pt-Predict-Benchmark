@@ -17,6 +17,19 @@
     .pill { border:1px solid #cbdacc; border-radius:100px; background:#e6f1e7; padding:10px 15px; font-size:13px; color:#426e4d; font-weight:700; }
     .box { background:#fff; border:1px solid #e1e7e1; box-shadow:0 12px 38px #2430390b; border-radius:18px; }
     .controls { padding:21px 23px 19px; display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:end; }
+    .model-picker { grid-column:1/-1; border-top:1px solid #e7ece7; padding-top:16px; }
+    .model-picker .model-row { display:flex; align-items:center; gap:12px; }
+    .model-picker input[type=checkbox] { appearance:none; position:relative; flex:none; width:62px; height:34px; padding:0; border:1px solid #a8c8b4; border-radius:18px; background:#d9e8dd; cursor:pointer; transition:background .18s ease; }
+    .model-picker input[type=checkbox]::before { content:""; position:absolute; top:3px; left:3px; width:26px; height:26px; border-radius:50%; background:#fff; box-shadow:0 1px 4px #2430393b; transition:transform .18s ease; }
+    .model-picker input[type=checkbox]:checked { background:#36815e; border-color:#36815e; }
+    .model-picker input[type=checkbox]:checked::before { transform:translateX(28px); }
+    .model-picker input[type=checkbox]:focus-visible { outline:3px solid #82b799; outline-offset:3px; }
+    .mode-end { position:relative; min-width:105px; padding:0 12px; background:#f3f7f3; color:#66756c; border:1px solid #dbe5dd; }
+    .mode-end.active { background:#e3f0e6; border-color:#81ad91; color:#246244; }
+    .mode-end:focus-visible { outline:3px solid #82b799; outline-offset:2px; }
+    .mode-end::after { content:attr(data-tooltip); position:absolute; top:calc(100% + 8px); left:0; width:300px; padding:10px 12px; border-radius:9px; background:#24373a; box-shadow:0 8px 24px #24303933; color:#fff; font-size:13px; font-weight:500; line-height:1.6; text-align:left; opacity:0; visibility:hidden; pointer-events:none; z-index:5; }
+    #mode-rui::after { left:auto; right:0; }
+    .mode-end:hover::after,.mode-end:focus-visible::after { opacity:1; visibility:visible; }
     label { display:block; font-size:13px; font-weight:700; color:#64737b; margin:0 0 8px; }
     select,input,button { font:inherit; }
     select,input { width:100%; border:1px solid #cdd8d1; border-radius:10px; background:#fbfcfa; color:#26343a; height:46px; padding:0 13px; outline:none; }
@@ -30,6 +43,7 @@
     #result { margin-top:20px; }
     .endgame-warning { margin:18px 23px 0; padding:15px 18px; border:1px solid #dfa59a; border-radius:12px; background:#fff1e9; color:#943e35; font-size:17px; font-weight:800; }
     .result-top { padding:20px 23px; display:flex; gap:15px; justify-content:space-between; align-items:center; flex-wrap:wrap; }
+    .logic-badge { border:1px solid #cbdacc; border-radius:100px; background:#e6f1e7; padding:7px 12px; color:#426e4d; font-size:12px; font-weight:800; }
     .result-top h2 { font-size:21px; margin:0 0 4px; }
     .result-top p { margin:0; font-size:13px; color:#718087; }
     .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; padding:0 23px 20px; }
@@ -65,7 +79,7 @@
     #close-update { background:#edf4ed; color:#315c45; height:36px; }
     #release-link { display:inline-block; padding:11px 15px; border-radius:9px; background:#36815e; color:white; text-decoration:none; font-weight:700; }
     #release-link[hidden] { display:none; }
-    @media(max-width:750px) { .shell{padding:18px 12px 120px} h1{font-size:28px} .controls{grid-template-columns:1fr;padding:16px} .stats{grid-template-columns:repeat(2,1fr);padding:0 16px 18px} .stat strong{font-size:18px} iframe{height:1120px} .dock{gap:5px;padding:8px} .dock button,.dock a{font-size:12px} }
+    @media(max-width:750px) { .shell{padding:18px 12px 120px} h1{font-size:28px} .controls{grid-template-columns:1fr;padding:16px} .model-picker .model-row{gap:8px} .mode-end{min-width:82px;padding:0 5px} .stats{grid-template-columns:repeat(2,1fr);padding:0 16px 18px} .stat strong{font-size:18px} iframe{height:1120px} .dock{gap:5px;padding:8px} .dock button,.dock a{font-size:12px} }
   </style>
 </head>
 <body><main class="shell">
@@ -74,12 +88,17 @@
     <div class="controls">
       <div><label for="source">档线来源</label><select id="source"><option value="bestdori" selected>Bestdori（默认）</option><option value="hhwx">HHWX</option></select></div>
       <div><label for="event">国服活动 ID</label><input id="event" type="number" inputmode="numeric" min="1" placeholder="留空自动识别当前活动"></div>
+      <div class="model-picker"><label for="model-mode">预测模式</label><div class="model-row">
+        <button id="mode-mashiro" class="mode-end active" type="button" data-tooltip="真白心飞天外，仅参考当前时刻给出数据" aria-description="真白心飞天外，仅参考当前时刻给出数据">Mashiro</button>
+        <input id="model-mode" type="checkbox" role="switch" aria-label="预测模式" aria-checked="false" aria-description="关闭为 Mashiro，开启为 Rui">
+        <button id="mode-rui" class="mode-end" type="button" data-tooltip="瑠唯严谨细致，从活动开始时对预测线进行剪枝，可能需要更长预报时间。" aria-description="瑠唯严谨细致，从活动开始时对预测线进行剪枝，可能需要更长预报时间。">Rui</button>
+      </div></div>
     </div>
   </section>
   <div id="notice" class="notice" role="status" aria-live="polite"></div>
   <section id="result" class="box" hidden>
     <div id="endgame-warning" class="endgame-warning" role="alert" hidden></div>
-    <div class="result-top"><div><h2 id="result-title">当前活动预测</h2><p id="result-meta"></p></div></div>
+    <div class="result-top"><div><h2 id="result-title">当前活动预测</h2><p id="result-meta"></p></div><span id="logic-badge" class="logic-badge" hidden></span></div>
     <div id="stats" class="stats"></div>
     <div class="viewer-wrap"><iframe id="viewer" title="tsukushi-aoi 交互预测图"></iframe></div>
   </section>
@@ -93,12 +112,17 @@ const $=id=>document.getElementById(id);
 const chinaTime=ms=>new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(ms));
 const points=n=>Math.round(n).toLocaleString('zh-CN')+' PT';
 function notice(text,error=false){$('notice').textContent=text;$('notice').classList.toggle('error',error)}
-async function health(){try{let r=await fetch('/api/health');let d=await r.json();let status=d.training_status||{};let training={not_checked:'待检查更新',checking:'正在检查已完成活动',up_to_date:'资料已同步',updated:'已更新活动 '+(status.updated_event_ids||[]).join('、'),pending_final:'等待活动 '+status.pending_event_id+' 收官数据',error:'资料更新暂不可用'}[status.status]||'资料状态未知';$('model-state').textContent='模型：'+d.model_ids.control+' / '+d.model_ids.members+' · 已完成活动资料截至 '+chinaTime(d.training_cutoff_at)+' · '+training}catch(e){$('model-state').textContent='模型状态读取失败'}}
-async function generate(){let button=$('refresh');button.disabled=true;button.textContent='生成中…';notice('正在读取四档最新档线并生成预测图。');try{
-  let r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:$('source').value,event_id:$('event').value.trim()})});
+const selectedMode=()=>$('model-mode').checked?'rui':'mashiro';
+function updateMode(){let rui=selectedMode()==='rui';$('mode-mashiro').classList.toggle('active',!rui);$('mode-rui').classList.toggle('active',rui);$('model-mode').setAttribute('aria-checked',String(rui));if(!$('result').hidden){$('result').hidden=true;$('download').setAttribute('aria-disabled','true');$('refresh').textContent='预测';notice('已切换预测模式，请点击预测生成新报。')}}
+$('model-mode').addEventListener('change',updateMode);
+for(let [id,value] of [['mode-mashiro',false],['mode-rui',true]])$(''+id).addEventListener('click',()=>{$('model-mode').checked=value;updateMode()});
+async function health(){try{let r=await fetch('/api/health');let d=await r.json();let status=d.training_status||{};let training={not_checked:'待检查更新',checking:'正在检查已完成活动',up_to_date:'资料已同步',updated:'已更新活动 '+(status.updated_event_ids||[]).join('、'),pending_final:'等待活动 '+status.pending_event_id+' 收官数据',error:'资料更新暂不可用'}[status.status]||'资料状态未知';$('model-state').textContent='可用模式：Mashiro / Rui · 已完成活动资料截至 '+chinaTime(d.training_cutoff_at)+' · '+training}catch(e){$('model-state').textContent='模型状态读取失败'}}
+async function generate(){let button=$('refresh');button.disabled=true;$('model-mode').disabled=true;$('mode-mashiro').disabled=true;$('mode-rui').disabled=true;button.textContent='生成中…';notice('正在读取四档最新档线并生成预测图。');try{
+  let r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:$('source').value,event_id:$('event').value.trim(),model_mode:selectedMode()})});
   let d=await r.json();if(!r.ok)throw Error(d.error||'生成失败');
-  let names={bestdori:'Bestdori',hhwx:'HHWX'};let mode=d.mode==='early_progress'?'开场阶段':'末段预测';
+  let names={bestdori:'Bestdori',hhwx:'HHWX'};let mode=d.remaining_hours>72?'开场阶段':'末段预测';
   $('result-title').textContent='#'+d.event_id+' · '+mode;
+  $('logic-badge').textContent=d.model_mode==='rui'?'Rui':'Mashiro';$('logic-badge').hidden=false;
   $('result-meta').textContent='起报 '+chinaTime(d.issued_at)+' · 来源 '+names[d.source]+' · 剩余 '+d.remaining_hours.toFixed(1)+' 小时';
   let linear=d.linear1h||{};let complete=[500,1000,1500,2000].every(t=>Number.isFinite(linear[t]));
   $('endgame-warning').hidden=d.remaining_hours>3;
@@ -106,7 +130,7 @@ async function generate(){let button=$('refresh');button.disabled=true;button.te
   $('stats').replaceChildren();for(let tier of [500,1000,1500,2000]){let box=document.createElement('div');box.className='stat';let label=document.createElement('span');let value=document.createElement('strong');let projected=Number.isFinite(linear[tier]);label.textContent='T'+tier+(projected?' · 1h线性投影终值':' · kaori 终值');value.textContent=points(projected?linear[tier]:d.control[tier]);box.append(label,value);if(projected){let secondary=document.createElement('small');secondary.textContent='kaori '+points(d.control[tier]);box.appendChild(secondary)}$('stats').appendChild(box)}
   $('viewer').src=d.viewer_url+'?v='+d.issued_at;$('download').href=d.image_url;$('download').download='tsukushi-'+d.event_id+'-'+d.issued_at+'.png';$('download').setAttribute('aria-disabled','false');$('result').hidden=false;
   notice('已生成。切换档位可查看成员线，底部可导出完整图片。');$('result').scrollIntoView({behavior:'smooth',block:'start'});
-}catch(e){notice(e.message||String(e),true)}finally{button.disabled=false;button.textContent=$('result').hidden?'预测':'刷新'}}
+}catch(e){notice(e.message||String(e),true)}finally{button.disabled=false;$('model-mode').disabled=false;$('mode-mashiro').disabled=false;$('mode-rui').disabled=false;button.textContent=$('result').hidden?'预测':'刷新'}}
 $('refresh').addEventListener('click',generate);
 $('event').addEventListener('keydown',e=>{if(e.key==='Enter')generate()});
 $('quit').addEventListener('click',async()=>{await fetch('/api/quit',{method:'POST'});notice('应用已退出，可以关闭此页面。');$('refresh').disabled=true});

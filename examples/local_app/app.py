@@ -157,9 +157,11 @@ class LocalApp:
             self.sync_training()
             self.stop_event.wait(3600)
 
-    def generate(self, source, event_id):
+    def generate(self, source, event_id, model_mode="mashiro"):
         if source not in ("bestdori", "hhwx"):
             raise ValueError("请选择 Bestdori 或 HHWX")
+        if model_mode not in ("mashiro", "rui"):
+            raise ValueError("请选择 Mashiro 或 Rui")
         if not self.lock.acquire(blocking=False):
             raise ValueError("已有一报正在生成，请稍等")
         try:
@@ -170,12 +172,14 @@ class LocalApp:
             if issued - start < 3 * 3600000:
                 raise ValueError("活动开场未满 3 小时，暂不起报")
             model_state = self.state
-            snapshot = predict(panel, model_state)
+            snapshot = predict(panel, model_state, mode=model_mode)
             report_id = f"{chosen}-{issued}"
             files = {ext: self.output_dir / f"{report_id}.{ext}"
                      for ext in ("json", "html", "png")}
-            payload = {"event_id": chosen, "model_id": "tsukushi-aoi",
-                       "control_model_id": "tsukushi-kaori", "source": source,
+            payload = {"event_id": chosen,
+                       "model_id": "tsukushi-aoi",
+                       "control_model_id": "tsukushi-kaori",
+                       "model_mode": model_mode, "source": source,
                        "source_urls": urls,
                        "model_state_sha256": model_state["fit_sha256"],
                        "generated_at": issued, "snapshots": [snapshot]}
@@ -190,6 +194,7 @@ class LocalApp:
             for ext in ("json", "html", "png"):
                 os.replace(temp[ext], files[ext])
             return {"report_id": report_id, "event_id": chosen,
+                    "model_mode": model_mode,
                     "source": source, "issued_at": issued,
                     "mode": snapshot["forecast_mode"],
                     "remaining_hours": (snapshot["end_at"] - issued) / 3600000,
@@ -281,7 +286,8 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(request, dict):
                 raise ValueError("请求格式错误")
             response = self.app.generate(request.get("source", "bestdori"),
-                                         request.get("event_id"))
+                                         request.get("event_id"),
+                                         request.get("model_mode", "mashiro"))
             return self._send(200, json.dumps(response, ensure_ascii=False).encode("utf-8"),
                               "application/json; charset=utf-8")
         except (ValueError, KeyError, TimeoutError, OSError) as exc:
