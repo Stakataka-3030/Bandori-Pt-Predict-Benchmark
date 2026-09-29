@@ -16,6 +16,7 @@ if str(MODEL_DIR) not in sys.path:
     sys.path.insert(0, str(MODEL_DIR))
 from member_ensemble import EmpiricalMemberEnsemble, HORIZONS  # noqa: E402
 from ensemble import TAIL  # noqa: E402
+from output_order import constrain_snapshot  # noqa: E402
 
 TIERS = (500, 1000, 1500, 2000)
 HOUR = 3600000
@@ -330,4 +331,4 @@ def predict(panel, state, mode="mashiro"):
                 snapshot["linear1h_paths"][tier] = projection["path"]
                 snapshot["linear1h_details"][tier] = {
                     key: projection[key] for key in ("growth_per_hour", "basis_from", "basis_to")}
-    return snapshot
+    return constrain_snapshot(snapshot)
