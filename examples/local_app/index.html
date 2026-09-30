@@ -18,7 +18,9 @@
     .box { background:#fff; border:1px solid #e1e7e1; box-shadow:0 12px 38px #2430390b; border-radius:18px; }
     .controls { padding:21px 23px 19px; display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:end; }
     .model-picker { grid-column:1/-1; border-top:1px solid #e7ece7; padding-top:16px; }
-    .model-picker .model-row { display:flex; align-items:center; gap:12px; }
+    .model-picker .model-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    .text-report-button { margin-left:auto; color:#315c45; background:#edf4ed; border:1px solid #d7e2d9; }
+    .text-report-button:disabled { opacity:.6; cursor:wait; }
     .model-picker input[type=checkbox] { appearance:none; position:relative; flex:none; width:62px; height:34px; padding:0; border:1px solid #a8c8b4; border-radius:18px; background:#d9e8dd; cursor:pointer; transition:background .18s ease; }
     .model-picker input[type=checkbox]::before { content:""; position:absolute; top:3px; left:3px; width:26px; height:26px; border-radius:50%; background:#fff; box-shadow:0 1px 4px #2430393b; transition:transform .18s ease; }
     .model-picker input[type=checkbox]:checked { background:#36815e; border-color:#36815e; }
@@ -79,6 +81,12 @@
     #close-update { background:#edf4ed; color:#315c45; height:36px; }
     #release-link { display:inline-block; padding:11px 15px; border-radius:9px; background:#36815e; color:white; text-decoration:none; font-weight:700; }
     #release-link[hidden] { display:none; }
+    #bulletin-dialog { width:min(820px,calc(100vw - 32px)); }
+    .bulletin-actions { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
+    .bulletin-actions button { height:38px; padding:0 15px; background:#edf4ed; color:#315c45; }
+    .bulletin-actions button[aria-pressed="true"] { background:#36815e; color:#fff; }
+    #bulletin-text { width:100%; height:42vh; resize:vertical; border:1px solid #d0ddd4; border-radius:10px; padding:14px; background:#fbfcfa; color:#243039; font:14px/1.7 Consolas,"Microsoft YaHei",monospace; white-space:pre; }
+    #bulletin-notice { font-size:13px; color:#58716b; min-height:20px; }
     @media(max-width:750px) { .shell{padding:18px 12px 120px} h1{font-size:28px} .controls{grid-template-columns:1fr;padding:16px} .model-picker .model-row{gap:8px} .mode-end{min-width:82px;padding:0 5px} .stats{grid-template-columns:repeat(2,1fr);padding:0 16px 18px} .stat strong{font-size:18px} iframe{height:1120px} .dock{gap:5px;padding:8px} .dock button,.dock a{font-size:12px} }
   </style>
 </head>
@@ -92,6 +100,7 @@
         <button id="mode-mashiro" class="mode-end active" type="button" data-tooltip="真白心飞天外，仅参考当前时刻给出数据" aria-description="真白心飞天外，仅参考当前时刻给出数据">Mashiro</button>
         <input id="model-mode" type="checkbox" role="switch" aria-label="预测模式" aria-checked="false" aria-description="关闭为 Mashiro，开启为 Rui">
         <button id="mode-rui" class="mode-end" type="button" data-tooltip="瑠唯严谨细致，从活动开始时对预测线进行剪枝，可能需要更长预报时间。" aria-description="瑠唯严谨细致，从活动开始时对预测线进行剪枝，可能需要更长预报时间。">Rui</button>
+        <button id="bulletin" class="text-report-button" type="button">生成文本报文</button>
       </div></div>
     </div>
   </section>
@@ -107,6 +116,7 @@
 <nav class="dock" aria-label="主要操作"><button id="refresh" type="button">预测</button><a id="download" href="#" aria-disabled="true" download="tsukushi-prediction.png">导出图片</a><button id="help" type="button">说明</button><button id="check-update" type="button">检查更新</button></nav>
 <dialog id="help-dialog"><div class="dialog-head"><h2>说明</h2><button id="close-help" type="button">关闭</button></div><div id="help-text">说明尚未添加。</div></dialog>
 <dialog id="update-dialog"><div class="dialog-head"><h2>检查更新</h2><button id="close-update" type="button">关闭</button></div><p id="update-text"></p><a id="release-link" hidden target="_blank" rel="noopener noreferrer">查看 GitHub Release</a></dialog>
+<dialog id="bulletin-dialog"><div class="dialog-head"><h2>文本报文</h2><button id="close-bulletin" type="button">关闭</button></div><div class="bulletin-actions"><button id="numeric-bulletin" type="button" aria-pressed="true">数值报文</button><button id="readable-bulletin" type="button" aria-pressed="false">可读报文</button></div><textarea id="bulletin-text" readonly aria-label="报文内容" spellcheck="false"></textarea><div class="bulletin-actions"><button id="copy-bulletin" type="button">复制报文</button><button id="export-bulletin" type="button">下载 TXT</button></div><div id="bulletin-notice" role="status" aria-live="polite"></div></dialog>
 <script>
 const $=id=>document.getElementById(id);
 const chinaTime=ms=>new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(ms));
@@ -117,7 +127,7 @@ function updateMode(){let rui=selectedMode()==='rui';$('mode-mashiro').classList
 $('model-mode').addEventListener('change',updateMode);
 for(let [id,value] of [['mode-mashiro',false],['mode-rui',true]])$(''+id).addEventListener('click',()=>{$('model-mode').checked=value;updateMode()});
 async function health(){try{let r=await fetch('/api/health');let d=await r.json();let status=d.training_status||{};let training={not_checked:'待检查更新',checking:'正在检查已完成活动',up_to_date:'资料已同步',updated:'已更新活动 '+(status.updated_event_ids||[]).join('、'),pending_final:'等待活动 '+status.pending_event_id+' 收官数据',error:'资料更新暂不可用'}[status.status]||'资料状态未知';$('model-state').textContent='可用模式：Mashiro / Rui · 已完成活动资料截至 '+chinaTime(d.training_cutoff_at)+' · '+training}catch(e){$('model-state').textContent='模型状态读取失败'}}
-async function generate(){let button=$('refresh');button.disabled=true;$('model-mode').disabled=true;$('mode-mashiro').disabled=true;$('mode-rui').disabled=true;button.textContent='生成中…';notice('正在读取四档最新档线并生成预测图。');try{
+async function generate(){let button=$('refresh');if(button.disabled)return;button.disabled=true;$('bulletin').disabled=true;$('model-mode').disabled=true;$('mode-mashiro').disabled=true;$('mode-rui').disabled=true;button.textContent='生成中…';notice('正在读取四档最新档线并生成预测图。');try{
   let r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:$('source').value,event_id:$('event').value.trim(),model_mode:selectedMode()})});
   let d=await r.json();if(!r.ok)throw Error(d.error||'生成失败');
   let names={bestdori:'Bestdori',hhwx:'HHWX'};let mode=d.remaining_hours>72?'开场阶段':'末段预测';
@@ -130,9 +140,18 @@ async function generate(){let button=$('refresh');button.disabled=true;$('model-
   $('stats').replaceChildren();for(let tier of [500,1000,1500,2000]){let box=document.createElement('div');box.className='stat';let label=document.createElement('span');let value=document.createElement('strong');let projected=Number.isFinite(linear[tier]);label.textContent='T'+tier+(projected?' · 1h线性投影终值':' · kaori 终值');value.textContent=points(projected?linear[tier]:d.control[tier]);box.append(label,value);if(projected){let secondary=document.createElement('small');secondary.textContent='kaori '+points(d.control[tier]);box.appendChild(secondary)}$('stats').appendChild(box)}
   $('viewer').src=d.viewer_url+'?v='+d.issued_at;$('download').href=d.image_url;$('download').download='tsukushi-'+d.event_id+'-'+d.issued_at+'.png';$('download').setAttribute('aria-disabled','false');$('result').hidden=false;
   notice('已生成。切换档位可查看成员线，底部可导出完整图片。');$('result').scrollIntoView({behavior:'smooth',block:'start'});
-}catch(e){notice(e.message||String(e),true)}finally{button.disabled=false;$('model-mode').disabled=false;$('mode-mashiro').disabled=false;$('mode-rui').disabled=false;button.textContent=$('result').hidden?'预测':'刷新'}}
+}catch(e){notice(e.message||String(e),true)}finally{button.disabled=false;$('bulletin').disabled=false;$('model-mode').disabled=false;$('mode-mashiro').disabled=false;$('mode-rui').disabled=false;button.textContent=$('result').hidden?'预测':'刷新'}}
 $('refresh').addEventListener('click',generate);
 $('event').addEventListener('keydown',e=>{if(e.key==='Enter')generate()});
+let bulletinData=null,bulletinFormat='numeric';
+function showBulletin(format){bulletinFormat=format;$('bulletin-text').value=bulletinData[format];$('numeric-bulletin').setAttribute('aria-pressed',String(format==='numeric'));$('readable-bulletin').setAttribute('aria-pressed',String(format==='readable'));$('bulletin-notice').textContent=''}
+async function generateBulletins(){let button=$('bulletin');if(button.disabled)return;button.disabled=true;$('refresh').disabled=true;button.textContent='报文生成中…';notice('正在用同一批档线生成 Mashiro 和 Rui 报文。');try{let r=await fetch('/api/bulletins',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:$('source').value,event_id:$('event').value.trim()})});let d=await r.json();if(!r.ok)throw Error(d.error||'报文生成失败');bulletinData=d;showBulletin('numeric');$('bulletin-dialog').showModal();notice('两种报文已生成，可复制或下载 TXT。')}catch(e){notice(e.message||String(e),true)}finally{button.disabled=false;$('refresh').disabled=false;button.textContent='生成文本报文'}}
+$('bulletin').addEventListener('click',generateBulletins);
+$('numeric-bulletin').addEventListener('click',()=>showBulletin('numeric'));
+$('readable-bulletin').addEventListener('click',()=>showBulletin('readable'));
+$('close-bulletin').addEventListener('click',()=>$('bulletin-dialog').close());
+$('copy-bulletin').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('bulletin-text').value);$('bulletin-notice').textContent='已复制报文。'}catch(e){$('bulletin-text').focus();$('bulletin-text').select();$('bulletin-notice').textContent=document.execCommand('copy')?'已复制报文。':'请选中报文并手动复制。'}});
+$('export-bulletin').addEventListener('click',()=>{let url=URL.createObjectURL(new Blob([bulletinData[bulletinFormat]],{type:'text/plain;charset=utf-8'}));let link=document.createElement('a');link.href=url;link.download='tsukushi-'+bulletinData.event_id+'-'+bulletinData.issued_at+'-'+bulletinFormat+'.txt';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);$('bulletin-notice').textContent='已下载 TXT。'});
 $('quit').addEventListener('click',async()=>{await fetch('/api/quit',{method:'POST'});notice('应用已退出，可以关闭此页面。');$('refresh').disabled=true});
 function renderHelp(raw){let root=$('help-text');root.replaceChildren();for(let block of raw.trim().split(/\n\s*\n/)){let heading=block.match(/^##\s*(.+)$/m);if(heading){let title=document.createElement('h3');title.textContent=heading[1];root.appendChild(title);block=block.replace(/^##[^\n]*(\n|$)/,'').trim()}if(!block)continue;let para=document.createElement('p');let parts=block.split(/(https:\/\/[^\s）]+)/g);for(let part of parts){if(part.startsWith('https://')){let link=document.createElement('a');link.href=part;link.target='_blank';link.rel='noopener noreferrer';link.textContent=part;para.appendChild(link)}else{para.appendChild(document.createTextNode(part))}}root.appendChild(para)}let license=document.createElement('a');license.href='/api/license';license.target='_blank';license.rel='noopener noreferrer';license.textContent='阅读 MPL 2.0 协议全文';root.appendChild(license)}
 $('help').addEventListener('click',async()=>{try{let r=await fetch('/api/help');if(!r.ok)throw Error('说明读取失败');renderHelp(await r.text())}catch(e){renderHelp('说明读取失败。')}$('help-dialog').showModal()});

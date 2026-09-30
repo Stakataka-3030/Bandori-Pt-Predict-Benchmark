@@ -49,8 +49,13 @@ def active_event_id(now_ms):
 def event_info(event_id):
     meta = fetch_json(f"https://bestdori.com/api/events/{int(event_id)}.json")
     start, end = _cn_window(meta)
+    names = meta.get("eventName") or []
+    name = next((names[index] for index in (3, 0)
+                 if len(names) > index and isinstance(names[index], str)
+                 and names[index].strip()), f"活动{int(event_id)}")
     return {"event_id": int(event_id), "start_at": start, "end_at": end,
-            "event_type": meta.get("eventType", "unknown")}
+            "event_type": meta.get("eventType", "unknown"),
+            "event_name": " ".join(name.split()), "server": "cn", "server_name": "国服"}
 
 
 def tracker(source, event_id, tier, issued_at):
@@ -105,6 +110,8 @@ def live_panel(source, event_id, issued_at):
                       "input_cutoff_at": history[-1]["time"],
                       "history": history})
         urls.append(url)
-    return {"event_id": int(event_id), "horizon_hours":
+    return {"event_id": int(event_id), "event_name": info["event_name"],
+            "server": info["server"], "server_name": info["server_name"],
+            "horizon_hours":
             (info["end_at"] - issued_at) / 3600000,
             "issued_at": issued_at, "tasks": tasks}, urls

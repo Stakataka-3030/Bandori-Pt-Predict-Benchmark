@@ -26,6 +26,7 @@ if str(MODEL_DIR) not in sys.path:
 from build_member_viewer import build as build_viewer  # noqa: E402
 from data_source import active_event_id, live_panel  # noqa: E402
 from engine import predict  # noqa: E402
+from bulletins import format_bulletins  # noqa: E402
 from training_state import load_or_create, sync_once  # noqa: E402
 
 REPORT_RE = re.compile(r"^/reports/(\d+-\d+)\.(json|html|png)$")
@@ -209,6 +210,38 @@ class LocalApp:
         finally:
             self.lock.release()
 
+    def generate_bulletins(self, source, event_id):
+        if source not in ("bestdori", "hhwx"):
+            raise ValueError("请选择 Bestdori 或 HHWX")
+        if not self.lock.acquire(blocking=False):
+            raise ValueError("已有一报正在生成，请稍等")
+        try:
+            issued = int(time.time() * 1000)
+            chosen = int(event_id) if event_id else active_event_id(issued)
+            panel, urls = live_panel(source, chosen, issued)
+            if issued - panel["tasks"][0]["start_at"] < 3 * 3600000:
+                raise ValueError("活动开场未满 3 小时，暂不起报")
+            state = self.state
+            snapshots = {mode: predict(panel, state, mode=mode)
+                         for mode in ("mashiro", "rui")}
+            texts = format_bulletins(panel, snapshots)
+            report_id = f"{chosen}-{issued}-bulletin"
+            payload = {"event_id": chosen, "event_name": panel.get("event_name"),
+                       "server": panel.get("server", "cn"), "source": source,
+                       "source_urls": urls, "generated_at": issued,
+                       "model_state_sha256": state["fit_sha256"],
+                       "snapshots": snapshots, "bulletins": texts}
+            contents = {"json": json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n",
+                        "numeric.txt": texts["numeric"], "readable.txt": texts["readable"]}
+            for extension, content in contents.items():
+                target = self.output_dir / f"{report_id}.{extension}"
+                temporary = target.with_suffix(target.suffix + ".tmp")
+                temporary.write_text(content, encoding="utf-8")
+                os.replace(temporary, target)
+            return dict(texts, report_id=report_id, event_id=chosen, issued_at=issued)
+        finally:
+            self.lock.release()
+
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self, status, body, mime):
@@ -275,7 +308,7 @@ class Handler(BaseHTTPRequestHandler):
             self.app.stop_event.set()
             threading.Thread(target=self.server.shutdown, daemon=True).start()
             return
-        if self.path != "/api/generate":
+        if self.path not in ("/api/generate", "/api/bulletins"):
             return self._send(404, b"Not found", "text/plain")
         length = int(self.headers.get("Content-Length", "0"))
         if length <= 0 or length > 4096 or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
@@ -285,9 +318,13 @@ class Handler(BaseHTTPRequestHandler):
             request = json.loads(self.rfile.read(length))
             if not isinstance(request, dict):
                 raise ValueError("请求格式错误")
-            response = self.app.generate(request.get("source", "bestdori"),
-                                         request.get("event_id"),
-                                         request.get("model_mode", "mashiro"))
+            if self.path == "/api/bulletins":
+                response = self.app.generate_bulletins(request.get("source", "bestdori"),
+                                                       request.get("event_id"))
+            else:
+                response = self.app.generate(request.get("source", "bestdori"),
+                                             request.get("event_id"),
+                                             request.get("model_mode", "mashiro"))
             return self._send(200, json.dumps(response, ensure_ascii=False).encode("utf-8"),
                               "application/json; charset=utf-8")
         except (ValueError, KeyError, TimeoutError, OSError) as exc:
