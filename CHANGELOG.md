@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.16
+
+- Add numeric and readable text bulletins with both Mashiro/Rui Kaori controls and Aoi 10%/90% values from one shared tracker retrieval and forecast origin.
+- Add preview, copy and TXT download controls while keeping the four bottom actions. Save both texts and their forecast snapshots locally.
+- Resolve event names in Chinese with Japanese fallback; round displayed UTC/Beijing times to whole hours and mark T1500 corrections as CLAMPED.
+
 ## 0.3.15
 
 - Constrain published four-tier forecasts to T500 >= T1000 >= T1500 >= T2000 without refitting Mashiro or Rui.

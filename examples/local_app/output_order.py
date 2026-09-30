@@ -111,8 +111,11 @@ def constrain_snapshot(snapshot):
     snapshot["raw_linear1h"] = dict(snapshot.get("linear1h", {}))
 
     member_changed = False
+    t1500_clamped = False
     for member in members:
+        original_1500 = copy.deepcopy(member["paths"].get("1500"))
         member_changed |= _correct_paths(member["paths"], current)
+        t1500_clamped |= original_1500 != member["paths"].get("1500")
         member["terminals"] = {str(tier): member["paths"][str(tier)][-1][1]
                                for tier in TIERS if str(tier) in member["paths"]}
     if member_changed:
@@ -149,6 +152,9 @@ def constrain_snapshot(snapshot):
         for stamp in grid:
             values = {tier: _path_value(paths[tier], stamp) for tier in linear}
             projected.append(project_ranked(values, current))
+        if 1500 in linear:
+            t1500_clamped |= any(abs(fixed[1500] - _path_value(paths[1500], stamp)) > 1e-8
+                                 for stamp, fixed in zip(grid, projected))
         if any(abs(projected[step][tier] - _path_value(paths[tier], grid[step])) > 1e-8
                for step in range(33) for tier in linear):
             linear_changed = True
@@ -162,5 +168,7 @@ def constrain_snapshot(snapshot):
         "control_changed": snapshot["control_paths"] != snapshot["raw_control_paths"],
         "members_changed": member_changed,
         "linear1h_changed": linear_changed,
+        "t1500_clamped": t1500_clamped or (
+            snapshot["control_paths"].get("1500") != snapshot["raw_control_paths"].get("1500")),
     }
     return snapshot

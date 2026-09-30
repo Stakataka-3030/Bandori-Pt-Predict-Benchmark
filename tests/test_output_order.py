@@ -68,6 +68,7 @@ class OutputOrderTests(unittest.TestCase):
         self.assertTrue(result["rank_order_adjustment"]["control_changed"])
         self.assertTrue(result["rank_order_adjustment"]["members_changed"])
         self.assertTrue(result["rank_order_adjustment"]["linear1h_changed"])
+        self.assertTrue(result["rank_order_adjustment"]["t1500_clamped"])
         for family in ("control", "member_p10", "member_median", "member_p90", "linear1h"):
             self.assertTrue(ordered(result[family]), family)
         for member in result["members"]:
@@ -100,7 +101,7 @@ class OutputOrderTests(unittest.TestCase):
         self.assertEqual(result["control_paths"], original["control_paths"])
         self.assertEqual(result["rank_order_adjustment"], {
             "control_changed": False, "members_changed": False,
-            "linear1h_changed": False})
+            "linear1h_changed": False, "t1500_clamped": False})
 
 
 if __name__ == "__main__":
