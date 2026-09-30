@@ -3,6 +3,7 @@
 import copy
 from datetime import datetime, timezone
 import json
+import locale
 from pathlib import Path
 import sys
 import tempfile
@@ -57,6 +58,16 @@ class BulletinTests(unittest.TestCase):
         self.assertTrue(result["numeric"].endswith("CLAMPED\nEDEDEDED\n"))
         self.assertEqual(result["numeric"].count("CLAMPED"), 1)
         self.assertTrue(result["readable"].endswith("模型数值已Clamp\n"))
+
+    def test_readable_time_works_under_non_chinese_system_locale(self):
+        panel, snapshots = fixture()
+        previous = locale.setlocale(locale.LC_TIME)
+        try:
+            locale.setlocale(locale.LC_TIME, "C")
+            readable = format_bulletins(panel, snapshots)["readable"]
+            self.assertIn("2026年09月30日20时", readable)
+        finally:
+            locale.setlocale(locale.LC_TIME, previous)
 
     def test_time_rounding_rolls_date_and_rejects_mixed_origins(self):
         panel, snapshots = fixture()

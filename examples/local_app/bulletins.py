@@ -38,7 +38,10 @@ def format_bulletins(panel, snapshots):
     clamped = any(snapshot.get("rank_order_adjustment", {}).get("t1500_clamped", False)
                   for snapshot in snapshots.values())
     utc = lambda stamp: datetime.fromtimestamp(stamp / 1000, timezone.utc).strftime("%Y%m%d%H")
-    beijing = lambda stamp: datetime.fromtimestamp(stamp / 1000, CN).strftime("%Y年%m月%d日%H时")
+    def beijing(stamp):
+        date = datetime.fromtimestamp(stamp / 1000, CN)
+        # Windows strftime can reject non-ASCII literals under an English locale.
+        return f"{date.year:04d}年{date.month:02d}月{date.day:02d}日{date.hour:02d}时"
     numeric = ["STSTSTST", f"{event_id}{server}", utc(issue_hour), utc(end_hour), str(horizon)]
     readable = [f"{event_id}-{panel.get('event_name') or f'活动{event_id}'}-{panel.get('server_name', '国服')}",
                 f"起报时间：{beijing(issue_hour)}", f"截活时间：{beijing(end_hour)}",
