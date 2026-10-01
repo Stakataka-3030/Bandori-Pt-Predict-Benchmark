@@ -181,4 +181,4 @@ worker 可以拿整个 devkit 自由开发和自评；selection/final benchmark 
 
 `bandoribench.py` 是采集、冻结、基线及评分入口；`tests/` 为离线测试；`docs/SCORING.md` 定义评分和提交协议；`docs/DATA.md` 定义数据与来源；`.github/workflows/ci.yml` 仅做离线测试和合成 smoke，不定时采集、不生成真实成绩。
 
-实现和数据协议尚处于早期版本。原始第三方数据、临时运行文件和裁判真值默认不提交 Git。公开接口可读取不等于获得任意再分发许可；发布真实数据版本前需确认来源条款。项目许可证尚未指定。
+实现和数据协议尚处于早期版本。原始第三方数据、临时运行文件和裁判真值默认不提交 Git。公开接口可读取不等于获得任意再分发许可；发布真实数据版本前需确认来源条款。项目自有源码采用 [MPL 2.0](LICENSE)，素材与第三方内容的适用边界见 [LICENSE_SCOPE.md](LICENSE_SCOPE.md)。

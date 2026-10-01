@@ -7,6 +7,7 @@ name = "bandori-pt-predict-benchmark"
 version = "0.3.16"
 description = "Causal walk-forward benchmark for Bandori event cutoff forecasts"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = []
 
@@ -14,5 +15,6 @@ dependencies = []
 bandoribench = "bandoribench:main"
 
 [tool.setuptools]
+license-files = ["LICENSE", "LICENSE_SCOPE.md"]
 py-modules = ["bandoribench", "bandoribench_model"]
 packages = ["calendar_provider"]
