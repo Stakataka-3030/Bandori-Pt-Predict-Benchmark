@@ -24,7 +24,8 @@ def _date(ms):
 def render(snapshot: dict, output: Path, source: str) -> None:
     # Prediction dictionaries use integer tier keys in memory; exported JSON uses strings.
     snapshot = json.loads(json.dumps(snapshot))
-    for family in ("Microsoft YaHei", "SimHei", "Noto Sans CJK SC"):
+    point_only = snapshot.get("uncertainty") == "point_forecast_only"
+    for family in ("Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "Noto Sans CJK JP", "Source Han Sans SC"):
         if family in {item.name for item in font_manager.fontManager.ttflist}:
             plt.rcParams["font.sans-serif"] = [family]
             break
@@ -61,15 +62,16 @@ def render(snapshot: dict, output: Path, source: str) -> None:
                     linewidth=3.6, linestyle=(0, (3, 3)), zorder=5)
             ax.scatter([_date(end)], [projection[-1][1] / 10000],
                        color=red, s=86, zorder=7)
-        for value, color, size in ((snapshot["member_p10"][key], teal, 64),
-                                   (snapshot["member_p90"][key], gold, 64),
-                                   (snapshot["control"][key], purple, 78)):
+        endpoints = [(snapshot["control"][key], purple, 78)]
+        if not point_only:
+            endpoints += [(snapshot["member_p10"][key], teal, 64), (snapshot["member_p90"][key], gold, 64)]
+        for value, color, size in endpoints:
             ax.scatter([_date(end)], [value / 10000], color=color, s=size, zorder=6)
         ax.scatter([_date(snapshot["issued_at"])], [current / 10000],
                    color=ink, s=56, zorder=6)
         ax.axvline(_date(snapshot["issued_at"]), color="#d4d9d4",
                    linewidth=1.2, linestyle=(0, (2, 4)))
-        upper = max(snapshot["member_p90"][key],
+        upper = max(snapshot["control"][key], snapshot["member_p90"].get(key, 0),
                     projection[-1][1] if projection else 0,
                     *(member["terminals"][key] for member in snapshot["members"]))
         ax.set_ylim(0, upper / 10000 * 1.13)
@@ -98,17 +100,16 @@ def render(snapshot: dict, output: Path, source: str) -> None:
     bars.set_xticks([])
     bars.set_yticks([])
     bars.spines[:].set_visible(False)
+    point_max = max(*snapshot["control"].values(), *snapshot.get("linear1h", {}).values(), 1)
     largest = 0
     for i, tier in enumerate(TIERS):
         key = str(tier)
         top = 15.5 - i * 4.25
         bars.text(1, top + .82, f"T{tier}", fontsize=20,
                   fontweight="bold", color=ink, va="center")
-        rows = [
-                ("10%", snapshot["member_p10"][key], teal),
-                ("kaori", snapshot["control"][key], purple),
-                ("90%", snapshot["member_p90"][key], gold),
-        ]
+        rows = [("Topology T" if point_only else "kaori", snapshot["control"][key], purple)]
+        if not point_only:
+            rows = [("10%", snapshot["member_p10"][key], teal)] + rows + [("90%", snapshot["member_p90"][key], gold)]
         projection = snapshot.get("linear1h", {}).get(key)
         if projection is not None:
             rows.append(("1h投影", projection, red))
@@ -117,14 +118,15 @@ def render(snapshot: dict, output: Path, source: str) -> None:
             largest = max(largest, value)
             bars.text(1, y, label, va="center", fontsize=15,
                       fontweight="bold", color="#53616a")
-            bars.barh(y, value / 10000, left=72, height=.57,
-                      color=color, alpha=.93)
-            bars.text(75 + value / 10000, y, f"{value / 10000:.1f}万",
+            width = 36 * value / point_max if point_only else value / 10000
+            left = 40 if point_only else 72
+            bars.barh(y, width, left=left, height=.57, color=color, alpha=.93)
+            bars.text(80 if point_only else 75 + value / 10000, y, f"{value / 10000:.1f}万",
                       va="center", fontsize=16, fontweight="bold", color=ink)
         if i < 3:
             bars.axhline(top - 3.15, color="#e8eae6", linewidth=1)
-    bars.set_xlim(0, 72 + largest / 10000 * 1.23)
-    fig.text(.055, .955, "tsukushi-aoi", ha="left", va="center",
+    bars.set_xlim(0, 115 if point_only else 72 + largest / 10000 * 1.23)
+    fig.text(.055, .955, "tsukushi-topology-t" if point_only else "tsukushi-aoi", ha="left", va="center",
              fontsize=36, fontweight="bold", color=ink)
     fig.text(.055, .905, f"#{snapshot['event_id']} · {source}", ha="left",
              va="center", fontsize=24, fontweight="bold", color="#59666d")
@@ -144,6 +146,11 @@ def render(snapshot: dict, output: Path, source: str) -> None:
                  fontweight="bold", color=red,
                  bbox={"boxstyle": "round,pad=.55", "facecolor": "#fff1e9",
                        "edgecolor": "#e8b7aa"})
+    if point_only:
+        detail = snapshot["topology_diagnostics"]
+        usage = {"exact": "已评估时距", "nearest_horizon_approximation": "最近时距近似",
+                 "outside_evaluated_range": "不足 6 小时，超出已评估范围"}[detail["horizon_usage"]]
+        fig.text(.055, .025, f"点预测 · {usage} · 不提供概率区间；虚线仅连接当前值与终值，不代表增长轨迹", fontsize=12, color="#59666d")
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output, dpi=150, format="png", facecolor=fig.get_facecolor())
     plt.close(fig)

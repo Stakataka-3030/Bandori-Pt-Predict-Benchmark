@@ -161,8 +161,8 @@ class LocalApp:
     def generate(self, source, event_id, model_mode="mashiro"):
         if source not in ("bestdori", "hhwx"):
             raise ValueError("请选择 Bestdori 或 HHWX")
-        if model_mode not in ("mashiro", "rui"):
-            raise ValueError("请选择 Mashiro 或 Rui")
+        if model_mode not in ("mashiro", "rui", "topology"):
+            raise ValueError("请选择 Mashiro、Rui 或 Topology T")
         if not self.lock.acquire(blocking=False):
             raise ValueError("已有一报正在生成，请稍等")
         try:
@@ -178,8 +178,8 @@ class LocalApp:
             files = {ext: self.output_dir / f"{report_id}.{ext}"
                      for ext in ("json", "html", "png")}
             payload = {"event_id": chosen,
-                       "model_id": "tsukushi-aoi",
-                       "control_model_id": "tsukushi-kaori",
+                       "model_id": "tsukushi-topology-t" if model_mode == "topology" else "tsukushi-aoi",
+                       "control_model_id": "tsukushi-topology-t" if model_mode == "topology" else "tsukushi-kaori",
                        "model_mode": model_mode, "source": source,
                        "source_urls": urls,
                        "model_state_sha256": model_state["fit_sha256"],
@@ -189,7 +189,11 @@ class LocalApp:
             temp["json"].write_text(json.dumps(payload, ensure_ascii=False,
                                                separators=(",", ":")) + "\n",
                                     encoding="utf-8")
-            build_viewer(temp["json"], temp["html"])
+            if model_mode == "topology":
+                from topology_report import build as build_topology_viewer
+                build_topology_viewer(snapshot, temp["html"])
+            else:
+                build_viewer(temp["json"], temp["html"])
             from plot import render  # Matplotlib is only needed by the packaged app.
             render(snapshot, temp["png"], "Bestdori" if source == "bestdori" else "HHWX")
             for ext in ("json", "html", "png"):
@@ -198,6 +202,7 @@ class LocalApp:
                     "model_mode": model_mode,
                     "source": source, "issued_at": issued,
                     "mode": snapshot["forecast_mode"],
+                    "topology_diagnostics": snapshot.get("topology_diagnostics"),
                     "remaining_hours": (snapshot["end_at"] - issued) / 3600000,
                     "control": snapshot["control"],
                     "linear1h": snapshot["linear1h"],
@@ -266,6 +271,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health":
             model_state = self.app.state
             response = {"status": "ok", "model_ids": model_state["model_ids"],
+                        "available_modes": ["mashiro", "rui"] + (["topology"] if "topology_t" in model_state["fit"] else []),
                         "training_cutoff_at": model_state["training_cutoff_at"],
                         "state_sha256": model_state["fit_sha256"],
                         "training_status": self.app.training_status,

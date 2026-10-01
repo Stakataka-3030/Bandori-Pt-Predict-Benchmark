@@ -32,6 +32,8 @@ try {
         --icon (Join-Path $PSScriptRoot "icon.ico") `
         --distpath $destination --workpath (Join-Path $repo "build") `
         --specpath (Join-Path $repo "build") `
+        --paths $repo --paths (Join-Path $repo "examples/member_ensemble") `
+        --hidden-import bandoribench --hidden-import reward_topology_control `
         @dataArgs `
         (Join-Path $PSScriptRoot "app.py")
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }

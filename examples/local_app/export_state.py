@@ -22,17 +22,33 @@ from model_regime_multiplier import _samples  # noqa: E402
 TIERS = (500, 1000, 1500, 2000)
 
 
-def export(bundle_path: Path, output: Path) -> dict:
+def export(bundle_path: Path, output: Path, with_topology: bool = False) -> dict:
     source = bundle_path / "private" / "benchmark.json" if bundle_path.is_dir() else bundle_path
     raw = source.read_bytes()
     bundle = json.loads(raw)
-    events = sorted(bundle["reference_events"], key=lambda e: (e["end_at"], e["event_id"]))
+    events = sorted(bundle.get("reference_events", bundle.get("events", [])),
+                    key=lambda e: (e["start_at"], e["event_id"]))
     if not events:
         raise ValueError("reference event history is empty")
     model = EmpiricalMemberEnsemble()
     model.initialize({})
+    topology = None
+    if with_topology:
+        from reward_topology_control import new_fit, collect_residuals, event_available_at
+        topology = new_fit()
+    seen = set()
+    latest_start = -1
     for event in events:
+        if int(event["event_id"]) in seen or int(event["start_at"]) <= latest_start:
+            raise ValueError("duplicate or ambiguous event chronology")
+        if topology is not None:
+            if event_available_at(event) > int(datetime.now(timezone.utc).timestamp() * 1000):
+                raise ValueError("T export requires already available completed events")
+            topology["records"].extend(collect_residuals(model.control, event, topology["available_at"]))
+            topology["available_at"] = max(topology["available_at"], event_available_at(event))
         model.observe_event(event)
+        seen.add(int(event["event_id"]))
+        latest_start = int(event["start_at"])
     kaori = model.control
     completed = kaori.base.multiplier.completed
     multiplier_samples = {}
@@ -74,6 +90,8 @@ def export(bundle_path: Path, output: Path) -> dict:
         "aoi_templates": {str(h): templates for h, templates in model.templates.items()},
         "early_progress_paths": early_paths,
     }
+    if topology is not None:
+        fit["topology_t"] = topology
     checkpoint = {
         "schema": "tsukushi-local-state-v1",
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -98,8 +116,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export a derived local prediction state")
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--with-topology", action="store_true",
+                        help="include causal T point-forecast calibration")
     args = parser.parse_args()
-    state = export(args.bundle, args.out)
+    state = export(args.bundle, args.out, with_topology=args.with_topology)
     print(json.dumps({"out": str(args.out), "completed_events": len(state["completed_event_ids"]),
                       "early_event_families": len(state["fit"]["early_progress_paths"]),
                       "fit_sha256": state["fit_sha256"]}, ensure_ascii=False))
