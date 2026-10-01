@@ -78,7 +78,7 @@ class TopologyRuntimeTests(unittest.TestCase):
             self.assertNotIn('rank_order_adjustment',snapshot)
             self.assertTrue(all(a>=b for a,b in zip(snapshot['control'].values(),list(snapshot['control'].values())[1:])))
             path=self.root/'report.html';build(snapshot,path)
-            self.assertIn('不提供概率区间',path.read_text())
+            self.assertIn('不提供概率区间',path.read_text(encoding="utf-8"))
         with self.assertRaisesRegex(ValueError,'72 小时'):
             predict(T.make_panel(event(4),80),state,'topology')
     def test_residuals_use_prior_control_and_event_count(self):
