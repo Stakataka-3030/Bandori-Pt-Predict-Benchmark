@@ -1,6 +1,6 @@
 # Bandori PT Predict Benchmark
 
-**v0.3.16 · 新增包含 Mashiro / Rui 的数值报文和可读报文，支持复制与 TXT 下载。**
+**v0.3.17 · 更正四档奖励拓扑特征，保留已评分 CARE 模型的旧特征以保证复现。**
 
 项目自有源码采用 [MPL 2.0](LICENSE)，版权与素材边界见 [LICENSE_SCOPE.md](LICENSE_SCOPE.md)。
 
@@ -23,7 +23,7 @@ python bandoribench.py demo --out runs/demo
 
 ### Windows 本地预测器
 
-解压 `Tsukushi-Windows-v0.3.16.zip`，运行文件夹中的 `Tsukushi.exe`。应用在本机打开界面，默认读取 Bestdori，也可选 HHWX；活动开场满 3 小时后可按“预测”生成当前四档预测，有报表后按钮变为“刷新”，按“导出图片”保存完整图。模式开关默认 Mashiro（现有模型），Rui 从首个可用早期报点回放并按后续实况对成员降权，计算时间可能更长。两种逻辑的对外结果均经过[四档输出顺序校正](docs/TSUKUSHI_MODES.md)，原始终值仍留在本机报表 JSON 中。点击“生成文本报文”可在同一次取数下生成两种逻辑的数值／可读报文，预览后复制或下载 TXT，格式见[文本报文](docs/TEXT_BULLETINS.md)。初开场时数据量少，前 24 小时的预报主要供参考。应用不自动推送，也不需要帐号；读取实时档线和检查更新时需要联网。“说明”的正文可放在程序旁的 `说明.txt`。更新检查只在 GitHub 上有更新的 Tsukushi Windows 包时显示对应 Release 链接。
+当前已发布的 Windows 包仍为 v0.3.16；v0.3.17 为源码更新。解压 `Tsukushi-Windows-v0.3.16.zip`，运行文件夹中的 `Tsukushi.exe`。应用在本机打开界面，默认读取 Bestdori，也可选 HHWX；活动开场满 3 小时后可按“预测”生成当前四档预测，有报表后按钮变为“刷新”，按“导出图片”保存完整图。模式开关默认 Mashiro（现有模型），Rui 从首个可用早期报点回放并按后续实况对成员降权，计算时间可能更长。两种逻辑的对外结果均经过[四档输出顺序校正](docs/TSUKUSHI_MODES.md)，原始终值仍留在本机报表 JSON 中。点击“生成文本报文”可在同一次取数下生成两种逻辑的数值／可读报文，预览后复制或下载 TXT，格式见[文本报文](docs/TEXT_BULLETINS.md)。初开场时数据量少，前 24 小时的预报主要供参考。应用不自动推送，也不需要帐号；读取实时档线和检查更新时需要联网。“说明”的正文可放在程序旁的 `说明.txt`。更新检查只在 GitHub 上有更新的 Tsukushi Windows 包时显示对应 Release 链接。
 
 单文件版 `Tsukushi-Windows-SingleFile-v0.3.16.exe` 内含同一模型状态，可直接运行；首次打开需要解包片刻。生成的图片与报表仍保存在本机用户目录。自定义说明仍可将 `说明.txt` 放在 exe 旁。程序启动时会自动检查一次更新；有新版时右下角显示“更新”并链接到对应 Release，无法连接时显示“检查更新失败”且可点击重试。
 

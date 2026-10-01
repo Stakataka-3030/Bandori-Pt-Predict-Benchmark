@@ -154,8 +154,8 @@ Recommended tournament rule: each worker nominates exactly one development champ
 
 The CN reward era is part of each event/task metadata. The benchmark uses actual chronology, with explicit CN corrections around events 310–314, rather than assuming numeric event ID order:
 
-- `voice1000`: the older T1000 voice-expression reward regime.
-- `voice500_1500`: the newer T500/T1500 reward-boundary regime.
+- `voice1000`: the historical identifier for the older regime, with T1000 as the sole separate reward boundary among the tracked ranks.
+- `voice500_1500`: the historical identifier for the newer regime. It is not an exhaustive reward list. The tracked T500/T1000/T1500/T2000 boundaries each have a reward; T500/T1500 are relatively more attractive, according to the user correction on 2026-10-01.
 
 `model-plan` now records `target_era_counts` and `initial_training_era_counts` for every phase. It also emits a top-level `regime_shift` object. If every final-era label is unseen before final, `final_role` is `regime_shift_challenge`; mixed and same-regime tails are labeled separately.
 
@@ -166,3 +166,11 @@ For the current CN-Core chronology, this makes the interpretation explicit: deve
 - `overall_regime_shift_score`: the normal final macro score across the whole final phase.
 
 These are final-report diagnostics, not new tuning surfaces. Workers still receive only the development devkit.
+
+### Reward topology feature schema v2
+
+`reward_topology(task)` exposes source-tagged categorical topology, and `reward_feature_dict(task)` returns numeric indicator features under `cn-reward-topology-v2`. New-era T1000 and T2000 are rewarded boundaries, not zero-reward ranks. The higher-attraction indicator for T500/T1500 is categorical and is not a reward magnitude. The old sole T1000 boundary is a distinct category, not assumed equal to either modern category. Unknown servers, eras, and unmentioned ranks remain unknown. A cutoff boundary does not describe whether every player above that rank receives a reward.
+
+Existing CARE baselines retain their explicit `legacy-reward-geometry-v1` features through `legacy_reward_feature_dict`; they are preserved for reproduction and are not the authoritative full-topology interface. Mashiro/Kaori does not consume either reward feature function, so this semantic API correction does not by itself change its predictions.
+
+See [CN reward topology and compatibility](REWARD_TOPOLOGY.md) for the correction and its limits.

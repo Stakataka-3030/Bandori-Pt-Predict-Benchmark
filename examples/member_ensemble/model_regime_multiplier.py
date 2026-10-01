@@ -12,10 +12,11 @@ that multiplier (same-era preferred, legacy fallback), not only to the legacy br
     k     : k_ex_boundary for (tier=1000, era=voice500_1500), else 1.0.
 
 Parameter: k_ex_boundary = 0.92, selected by the pre-registered rule in `f3_select.py`
-("minimise the worst development-block ratio to Rinko").  Its structural grounding is
-the reward-boundary flip at CN event 310 (see experiments/00_audit/FINDINGS.md and
-03_shape/FINDINGS.md), which independently identifies a value near 0.74 with the same
-sign.
+("minimise the worst development-block ratio to Rinko").  It is retained as an empirically selected
+coefficient for replay compatibility. The user corrected the full reward topology
+on 2026-10-01: the new regime rewards all tracked T500/T1000/T1500/T2000 cutoffs,
+with T500/T1500 relatively more attractive. This coefficient must not be interpreted
+as evidence that T1000 has no reward, or as a numerical reward-attractiveness value.
 
 This module is the single source of truth for the internal harness AND the official
 `model-eval` runner.

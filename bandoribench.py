@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.3.16"
+VERSION = "0.3.17"
 HOUR = 3_600_000
 MODEL_API_VERSION = "bandoribench-model-api-v1"
 MODEL_PHASES = ("development", "selection", "final", "all")
@@ -280,7 +280,8 @@ def calendar_feature_dict(task: dict, calendar: dict | None) -> dict[str, float]
     return out
 
 
-def reward_feature_dict(task: dict) -> dict[str, float]:
+def legacy_reward_feature_dict(task: dict) -> dict[str, float]:
+    """Frozen CARE v1 geometry; not an exhaustive reward-topology statement."""
     tier = float(task["tier"])
     boundaries: list[float] = []
     if task["server"] == "cn":
@@ -297,6 +298,56 @@ def reward_feature_dict(task: dict) -> dict[str, float]:
             lo, hi = sorted(boundaries)
             out["reward_between"] = float(lo < tier < hi)
     return out
+
+REWARD_TOPOLOGY_SCHEMA = "cn-reward-topology-v2"
+CARE_REWARD_FEATURE_SCHEMA = "legacy-reward-geometry-v1"
+
+
+def reward_topology(task: dict) -> dict:
+    """Categorical user-supplied cutoff topology, corrected on 2026-10-01.
+
+    A boundary means a distinct reward cutoff, not whether an individual player
+    above that rank receives any reward. Era identifiers remain compatible.
+    No item values or equal attractiveness across eras are assumed.
+    """
+    tier = float(task["tier"])
+    era = task.get("era")
+    known = (task.get("server") == "cn" and tier in (500, 1000, 1500, 2000)
+             and era in ("voice1000", "voice500_1500"))
+    role = "unknown"
+    boundary = None
+    if known:
+        if era == "voice1000":
+            boundary = tier == 1000
+            role = "legacy_sole_boundary" if boundary else "no_separate_tracked_boundary"
+        else:
+            boundary = True
+            role = "modern_higher_attraction" if tier in (500, 1500) else "modern_other_rewarded"
+    return {"schema": REWARD_TOPOLOGY_SCHEMA,
+            "source": "user_supplied_2026-10-01", "known": known,
+            "is_reward_boundary": boundary, "attraction_category": role}
+
+
+def reward_feature_dict(task: dict) -> dict[str, float]:
+    """Full reward topology v2; existing CARE baselines explicitly use v1."""
+    topology = reward_topology(task)
+    tier = float(task["tier"])
+    known = topology["known"]
+    boundaries = ([1000.0] if task.get("era") == "voice1000"
+                  else [500.0, 1000.0, 1500.0, 2000.0]) if known else []
+    role = topology["attraction_category"]
+    return {"rank_log": math.log(max(tier, 1.0)),
+            "reward_known": float(known),
+            "reward_boundary": float(topology["is_reward_boundary"] is True),
+            "reward_between": float(bool(boundaries) and min(boundaries) < tier < max(boundaries)
+                                    and tier not in boundaries),
+            "reward_log_distance": min(abs(math.log(tier / b)) for b in boundaries) if boundaries else 0.0,
+            "reward_known_boundary_count": float(len(boundaries)),
+            "reward_attraction_known": float(role in ("modern_higher_attraction", "modern_other_rewarded")),
+            "reward_attraction_higher": float(role == "modern_higher_attraction"),
+            "reward_other_rewarded": float(role == "modern_other_rewarded"),
+            "reward_legacy_sole_boundary": float(role == "legacy_sole_boundary")}
+
 
 def normalize_points(rows: list[dict]) -> list[dict]:
     if not isinstance(rows, list):
@@ -1127,7 +1178,7 @@ def care_feature_dict(public: dict, task: dict, analog_meta: dict) -> dict[str, 
         features["analog_relative_spread"] = (max(candidates) - min(candidates)) / med
     else:
         features["analog_relative_spread"] = 0.0
-    features.update(reward_feature_dict(own))
+    features.update(legacy_reward_feature_dict(own))
     features.update(calendar_feature_dict(own, public.get("calendar")))
     return features
 
