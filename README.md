@@ -1,6 +1,6 @@
 # Bandori PT Predict Benchmark
 
-**v0.3.18 · 新增可选 Topology T 四档联合点预测，保留 Mashiro 默认及独立状态兼容。**
+**v0.3.19 · 第三模式命名为 Nanami，并加入数值／可读报文，保持预测和状态兼容。**
 
 项目自有源码采用 [MPL 2.0](LICENSE)，版权与素材边界见 [LICENSE_SCOPE.md](LICENSE_SCOPE.md)。
 
@@ -23,7 +23,7 @@ python bandoribench.py demo --out runs/demo
 
 ### Windows 本地预测器
 
-当前已发布的 Windows 包仍为 v0.3.16；v0.3.18 为源码更新。解压 `Tsukushi-Windows-v0.3.16.zip`，运行文件夹中的 `Tsukushi.exe`。应用在本机打开界面，默认读取 Bestdori，也可选 HHWX；活动开场满 3 小时后可按“预测”生成当前四档预测，有报表后按钮变为“刷新”，按“导出图片”保存完整图。模式开关默认 Mashiro（现有模型），Rui 从首个可用早期报点回放并按后续实况对成员降权，计算时间可能更长。两种逻辑的对外结果均经过[四档输出顺序校正](docs/TSUKUSHI_MODES.md)，原始终值仍留在本机报表 JSON 中。点击“生成文本报文”可在同一次取数下生成两种逻辑的数值／可读报文，预览后复制或下载 TXT，格式见[文本报文](docs/TEXT_BULLETINS.md)。初开场时数据量少，前 24 小时的预报主要供参考。应用不自动推送，也不需要帐号；读取实时档线和检查更新时需要联网。“说明”的正文可放在程序旁的 `说明.txt`。更新检查只在 GitHub 上有更新的 Tsukushi Windows 包时显示对应 Release 链接。
+当前已发布的 Windows 包仍为 v0.3.16；v0.3.19 为源码更新。解压 `Tsukushi-Windows-v0.3.16.zip`，运行文件夹中的 `Tsukushi.exe`。应用在本机打开界面，默认读取 Bestdori，也可选 HHWX；活动开场满 3 小时后可按“预测”生成当前四档预测，有报表后按钮变为“刷新”，按“导出图片”保存完整图。模式开关默认 Mashiro（现有模型），Rui 从首个可用早期报点回放并按后续实况对成员降权，计算时间可能更长。两种逻辑的对外结果均经过[四档输出顺序校正](docs/TSUKUSHI_MODES.md)，原始终值仍留在本机报表 JSON 中。点击“生成文本报文”可在同一次取数下生成 Mashiro、Rui 及可用 Nanami 的数值／可读报文，预览后复制或下载 TXT，格式见[文本报文](docs/TEXT_BULLETINS.md)。初开场时数据量少，前 24 小时的预报主要供参考。应用不自动推送，也不需要帐号；读取实时档线和检查更新时需要联网。“说明”的正文可放在程序旁的 `说明.txt`。更新检查只在 GitHub 上有更新的 Tsukushi Windows 包时显示对应 Release 链接。
 
 单文件版 `Tsukushi-Windows-SingleFile-v0.3.16.exe` 内含同一模型状态，可直接运行；首次打开需要解包片刻。生成的图片与报表仍保存在本机用户目录。自定义说明仍可将 `说明.txt` 放在 exe 旁。程序启动时会自动检查一次更新；有新版时右下角显示“更新”并链接到对应 Release，无法连接时显示“检查更新失败”且可点击重试。
 
@@ -183,6 +183,6 @@ worker 可以拿整个 devkit 自由开发和自评；selection/final benchmark 
 
 实现和数据协议尚处于早期版本。原始第三方数据、临时运行文件和裁判真值默认不提交 Git。公开接口可读取不等于获得任意再分发许可；发布真实数据版本前需确认来源条款。项目自有源码采用 [MPL 2.0](LICENSE)，素材与第三方内容的适用边界见 [LICENSE_SCOPE.md](LICENSE_SCOPE.md)。
 
-### 可选 Topology T 点预测
+### 可选 Nanami 点预测
 
 新增同制度奖励类别校准及四档联合终值估计，保留 Mashiro 默认。T1000/T1500 回顾性平均误差降低 15.75%，但 T2000 增加 2.0012%；这是用户接受权衡后的可选候选，未通过旧预注册显著性门槛。使用含 T 的独立状态目录，不沿用成员概率区间。参见 [使用与完整验证边界](docs/TOPOLOGY_T.md)。

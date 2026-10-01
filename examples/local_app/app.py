@@ -159,10 +159,11 @@ class LocalApp:
             self.stop_event.wait(3600)
 
     def generate(self, source, event_id, model_mode="mashiro"):
+        model_mode = "topology" if model_mode == "nanami" else model_mode
         if source not in ("bestdori", "hhwx"):
             raise ValueError("请选择 Bestdori 或 HHWX")
         if model_mode not in ("mashiro", "rui", "topology"):
-            raise ValueError("请选择 Mashiro、Rui 或 Topology T")
+            raise ValueError("请选择 Mashiro、Rui 或 Nanami")
         if not self.lock.acquire(blocking=False):
             raise ValueError("已有一报正在生成，请稍等")
         try:
@@ -229,7 +230,12 @@ class LocalApp:
             state = self.state
             snapshots = {mode: predict(panel, state, mode=mode)
                          for mode in ("mashiro", "rui")}
-            texts = format_bulletins(panel, snapshots)
+            unavailable = {}
+            try:
+                snapshots["nanami"] = predict(panel, state, mode="nanami")
+            except ValueError as exc:
+                unavailable["nanami"] = str(exc)
+            texts = format_bulletins(panel, snapshots, unavailable)
             report_id = f"{chosen}-{issued}-bulletin"
             payload = {"event_id": chosen, "event_name": panel.get("event_name"),
                        "server": panel.get("server", "cn"), "source": source,

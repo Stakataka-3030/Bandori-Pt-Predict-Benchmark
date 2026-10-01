@@ -24,8 +24,8 @@ def build(snapshot, target: Path):
         <line x1="{x(snapshot['issued_at']):.3f}" y1="{y(current):.3f}" x2="{x(end):.3f}" y2="{y(final):.3f}" stroke="#80669f" stroke-width="3" stroke-dasharray="8 6"/>
         <circle cx="{x(end):.3f}" cy="{y(final):.3f}" r="6" fill="#80669f"/></svg></section>''')
     target.write_text(f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Topology T 点预测</title><style>body{{font:16px system-ui,sans-serif;color:#27323b;background:#fbfaf7;max-width:1150px;margin:24px auto;padding:0 20px}}section{{background:white;border:1px solid #ddd;border-radius:14px;padding:18px;margin:16px 0}}h1{{margin-bottom:8px}}h2{{margin:0}}strong{{float:right;color:#80669f}}svg{{width:100%}}p{{line-height:1.7}}.values{{margin-top:14px}}</style>
-    <h1>Topology T · 四档联合点预测</h1><p>#{int(snapshot['event_id'])} · {escape(issue)} 起报（UTC+8）<br>
+    <title>Nanami 点预测</title><style>body{{font:16px system-ui,sans-serif;color:#27323b;background:#fbfaf7;max-width:1150px;margin:24px auto;padding:0 20px}}section{{background:white;border:1px solid #ddd;border-radius:14px;padding:18px;margin:16px 0}}h1{{margin-bottom:8px}}h2{{margin:0}}strong{{float:right;color:#80669f}}svg{{width:100%}}p{{line-height:1.7}}.values{{margin-top:14px}}</style>
+    <h1>Nanami · 四档联合点预测</h1><p>#{int(snapshot['event_id'])} · {escape(issue)} 起报（UTC+8）<br>
     {usage}，参考 {int(detail['nearest_evaluated_horizon_hours'])} 小时模型；{int(detail['sample_count'])} 场历史校准<br>
     不提供概率区间。黑线为已知档线；紫色虚线仅连接当前值与终值，不代表预测增长轨迹。</p>
     {''.join(pieces)}</html>''', encoding='utf-8')
