@@ -107,7 +107,7 @@ def render(snapshot: dict, output: Path, source: str) -> None:
         top = 15.5 - i * 4.25
         bars.text(1, top + .82, f"T{tier}", fontsize=20,
                   fontweight="bold", color=ink, va="center")
-        rows = [("Topology T" if point_only else "kaori", snapshot["control"][key], purple)]
+        rows = [("Nanami" if point_only else "kaori", snapshot["control"][key], purple)]
         if not point_only:
             rows = [("10%", snapshot["member_p10"][key], teal)] + rows + [("90%", snapshot["member_p90"][key], gold)]
         projection = snapshot.get("linear1h", {}).get(key)
@@ -126,7 +126,7 @@ def render(snapshot: dict, output: Path, source: str) -> None:
         if i < 3:
             bars.axhline(top - 3.15, color="#e8eae6", linewidth=1)
     bars.set_xlim(0, 115 if point_only else 72 + largest / 10000 * 1.23)
-    fig.text(.055, .955, "tsukushi-topology-t" if point_only else "tsukushi-aoi", ha="left", va="center",
+    fig.text(.055, .955, "Nanami" if point_only else "tsukushi-aoi", ha="left", va="center",
              fontsize=36, fontweight="bold", color=ink)
     fig.text(.055, .905, f"#{snapshot['event_id']} · {source}", ha="left",
              va="center", fontsize=24, fontweight="bold", color="#59666d")

@@ -88,7 +88,7 @@ class BulletinTests(unittest.TestCase):
             meta["eventName"][3] = None
             self.assertEqual(data_source.event_info(325)["event_name"], "日文名称")
 
-    def test_backend_reads_tracker_once_and_keeps_two_snapshots(self):
+    def test_backend_reads_tracker_once_and_keeps_three_snapshots(self):
         panel, snapshots = fixture()
         with tempfile.TemporaryDirectory() as directory:
             local = object.__new__(app.LocalApp)
@@ -96,14 +96,16 @@ class BulletinTests(unittest.TestCase):
             local.state = {"fit_sha256": "test-fit"}
             local.output_dir = Path(directory)
             with patch.object(app, "live_panel", return_value=(panel, ["test-source"])) as reader, \
-                    patch.object(app, "predict", side_effect=[snapshots["mashiro"], snapshots["rui"]]) as model, \
+                    patch.object(app, "predict", side_effect=[snapshots["mashiro"], snapshots["rui"], dict(snapshots["mashiro"], member_p10={}, member_p90={})]) as model, \
                     patch.object(app.time, "time", return_value=snapshots["mashiro"]["issued_at"] / 1000):
                 result = local.generate_bulletins("bestdori", 325)
             reader.assert_called_once()
-            self.assertEqual([call.kwargs["mode"] for call in model.call_args_list], ["mashiro", "rui"])
+            self.assertEqual([call.kwargs["mode"] for call in model.call_args_list], ["mashiro", "rui", "nanami"])
             stored = json.loads((local.output_dir / (result["report_id"] + ".json")).read_text(encoding="utf-8"))
-            self.assertEqual(set(stored["snapshots"]), {"mashiro", "rui"})
+            self.assertEqual(set(stored["snapshots"]), {"mashiro", "rui", "nanami"})
             self.assertEqual(stored["model_state_sha256"], "test-fit")
+            self.assertIn("NANKAORI\n1000\n800\n600\n400\n", result["numeric"])
+            self.assertEqual((local.output_dir / (result["report_id"] + ".readable.txt")).read_text(encoding="utf-8"), result["readable"])
             self.assertEqual((local.output_dir / (result["report_id"] + ".numeric.txt")).read_text(encoding="utf-8"), result["numeric"])
 
 

@@ -288,6 +288,7 @@ def _rui_snapshot(panel, state):
 
 
 def predict(panel, state, mode="mashiro"):
+    mode = "topology" if mode == "nanami" else mode
     if mode not in ("mashiro", "rui", "topology"):
         raise ValueError("unknown forecast mode")
     if not panel.get("tasks"):
@@ -318,7 +319,7 @@ def predict(panel, state, mode="mashiro"):
         raise ValueError("unsupported tier")
     if mode == "topology":
         if "topology_t" not in state["fit"]:
-            raise ValueError("该状态不含 T 校准，请用 --with-topology 导出，并用 --seed 与新的独立 --state 目录启动")
+            raise ValueError("该状态不含 Nanami 校准，请用 --with-topology 导出，并用 --seed 与新的独立 --state 目录启动")
         from reward_topology_control import predict_point
         values, diagnostics = predict_point(panel, LocalKaori(state), state["fit"]["topology_t"],
                                              state["completed_event_ids"], state["training_cutoff_at"])
@@ -353,7 +354,7 @@ def predict(panel, state, mode="mashiro"):
                           if int(p["time"]) <= int(t["issued_at"])
                           and int(p.get("available_at", p["time"])) <= int(t["issued_at"])]
         for t in panel["tasks"]}
-    snapshot["logic_mode"] = {"rui": "Rui", "mashiro": "Mashiro", "topology": "Topology T"}[mode]
+    snapshot["logic_mode"] = {"rui": "Rui", "mashiro": "Mashiro", "topology": "Nanami"}[mode]
     snapshot["linear1h"] = {}
     snapshot["linear1h_paths"] = {}
     snapshot["linear1h_details"] = {}

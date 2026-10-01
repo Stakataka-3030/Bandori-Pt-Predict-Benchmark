@@ -1,4 +1,4 @@
-"""Plain numeric and readable bulletins from one shared two-mode forecast."""
+"""Plain numeric and readable bulletins from one shared forecast with optional Nanami point output."""
 
 from datetime import datetime, timedelta, timezone
 import math
@@ -21,14 +21,25 @@ def _points(values, tier):
     return str(int(math.floor(value + .5)))
 
 
-def format_bulletins(panel, snapshots):
-    if set(snapshots) != {"mashiro", "rui"}:
+NANAMI_HEADING = "Nanami（在T1000和T1500上更优的实验性模型）"
+
+
+def format_bulletins(panel, snapshots, unavailable=None):
+    snapshots = dict(snapshots)
+    if "topology" in snapshots:
+        if "nanami" in snapshots:
+            raise ValueError("duplicate Nanami/topology mode")
+        snapshots["nanami"] = snapshots.pop("topology")
+    unavailable = dict(unavailable or {})
+    if set(unavailable) - {"nanami"} or ("nanami" in unavailable and "nanami" in snapshots):
+        raise ValueError("inconsistent unavailable mode")
+    if not {"mashiro", "rui"}.issubset(snapshots) or set(snapshots) - {"mashiro", "rui", "nanami"}:
         raise ValueError("报文必须包含 Mashiro 和 Rui")
     issued = int(snapshots["mashiro"]["issued_at"])
     end = int(snapshots["mashiro"]["end_at"])
     for snapshot in snapshots.values():
         if int(snapshot["issued_at"]) != issued or int(snapshot["end_at"]) != end:
-            raise ValueError("两种逻辑的报文起报时刻不一致")
+            raise ValueError("各模式的报文起报时刻不一致")
     issue_hour, end_hour = _hour(issued), _hour(end)
     horizon = max(0, (end_hour - issue_hour) // HOUR)
     event_id = int(panel["event_id"])
@@ -60,10 +71,21 @@ def format_bulletins(panel, snapshots):
         for tier in TIERS:
             readable.extend([f"T{tier}：", f"10%：{_points(snapshot['member_p10'], tier)}",
                              f"90%：{_points(snapshot['member_p90'], tier)}"])
+    if "nanami" in snapshots:
+        point = snapshots["nanami"]
+        numeric.append("NANKAORI")
+        numeric.extend(_points(point["control"], tier) for tier in TIERS)
+        numeric.extend(["NANAOI", "UNAVAILABLE"])
+        readable.extend(["", NANAMI_HEADING, "===点预测==="])
+        readable.extend(f"T{tier}：{_points(point['control'], tier)}" for tier in TIERS)
+        readable.append("不提供概率区间")
+    elif "nanami" in unavailable:
+        numeric.extend(["NANKAORI", "UNAVAILABLE", "NANAOI", "UNAVAILABLE"])
+        readable.extend(["", NANAMI_HEADING, "暂不可用：" + str(unavailable["nanami"])])
     if clamped:
         numeric.append("CLAMPED")
         readable.extend(["", "模型数值已Clamp"])
     numeric.append("EDEDEDED")
     return {"numeric": "\n".join(numeric) + "\n",
             "readable": "\n".join(readable) + "\n",
-            "clamped": clamped, "horizon_hours": horizon}
+            "clamped": clamped, "horizon_hours": horizon, "unavailable": unavailable}

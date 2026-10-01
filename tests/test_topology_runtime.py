@@ -40,7 +40,7 @@ class TopologyRuntimeTests(unittest.TestCase):
         fit = dict(new['fit']);fit.pop('topology_t')
         self.assertEqual(old['fit'], fit)
         self.assertEqual(read_state(self.root/'state.json')['fit_sha256'], new['fit_sha256'])
-        with self.assertRaisesRegex(ValueError, '不含 T'):
+        with self.assertRaisesRegex(ValueError, '不含 Nanami'):
             predict(T.make_panel(event(5), 12), old, 'topology')
     def test_prequential_incremental_full_reconstruction_all_horizons(self):
         seed = self.export([event(i) for i in range(1, 4)])

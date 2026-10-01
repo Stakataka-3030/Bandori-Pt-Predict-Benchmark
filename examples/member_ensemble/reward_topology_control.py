@@ -123,10 +123,10 @@ def groups_for(tasks):
         topology = B.reward_topology(task)
         if (task.get("server") != "cn" or task.get("era") != "voice500_1500"
                 or not topology["known"] or topology["is_reward_boundary"] is not True):
-            raise ValueError("T requires modern CN reward topology")
+            raise ValueError("Nanami requires modern CN reward topology")
         roles[int(task["tier"])] = topology["attraction_category"]
     if len(tasks) != 4 or set(roles) != set(TIERS):
-        raise ValueError("T requires four unique cutoff tiers")
+        raise ValueError("Nanami requires four unique cutoff tiers")
     groups = tuple(tuple(t for t in TIERS if roles[t] == role)
                    for role in ("modern_higher_attraction", "modern_other_rewarded"))
     if sorted(map(len, groups)) != [2, 2]:
@@ -141,10 +141,10 @@ def independent_predictions(control, panel):
     rows += control.predict_panel(dict(panel, tasks=[t for t in tasks if int(t["tier"]) == 1500]))
     by_case = {r["case_id"]: float(r["prediction"]) for r in rows}
     if len(rows) != 4 or len(by_case) != 4 or set(by_case) != {t["case_id"] for t in tasks}:
-        raise ValueError("T independent forecast coverage mismatch")
+        raise ValueError("Nanami independent forecast coverage mismatch")
     raw = {int(t["tier"]): by_case[t["case_id"]] for t in tasks}
     if any(not math.isfinite(v) or v < 0 for v in raw.values()):
-        raise ValueError("invalid T independent forecast")
+        raise ValueError("invalid Nanami independent forecast")
     return raw
 
 
@@ -159,7 +159,7 @@ def event_available_at(event):
             seen = int(label.get("available_at", stamp))
             value = float(label["ep"])
             if stamp < int(event["end_at"]) or seen < stamp or not math.isfinite(value) or value < 0:
-                raise ValueError("invalid completed T label")
+                raise ValueError("invalid completed Nanami label")
             available = max(available, seen)
     return available
 
@@ -167,7 +167,7 @@ def event_available_at(event):
 def collect_residuals(control, event, prior_available_at):
     """Call BEFORE observing the event; retain derived errors, never labels."""
     if event.get("server") != "cn":
-        raise ValueError("T training requires CN events")
+        raise ValueError("Nanami training requires CN events")
     available = event_available_at(event)
     if event.get("era") != "voice500_1500":
         return []
@@ -179,12 +179,12 @@ def collect_residuals(control, event, prior_available_at):
             continue
         issue = int(panel["tasks"][0]["issued_at"])
         if prior_available_at > issue:
-            raise ValueError("prior T training observations unavailable at historical origin")
+            raise ValueError("prior Nanami training observations unavailable at historical origin")
         raw = independent_predictions(control, panel)
         truth = [float(event["tiers"][str(t)]["label"]["ep"]) for t in TIERS]
         current = [float(t["history"][-1]["ep"]) for t in panel["tasks"]]
         if any(b > a for a, b in zip(truth, truth[1:])) or any(c > y for c, y in zip(current, truth)):
-            raise ValueError("invalid completed T rank surface")
+            raise ValueError("invalid completed Nanami rank surface")
         errors = [(truth[i] - raw[t]) / growth_scale(raw[t], current[i]) for i, t in enumerate(TIERS)]
         records.append({"event_id": int(event["event_id"]), "era": event["era"],
                         "end_at": int(event["end_at"]), "available_at": available,
@@ -200,17 +200,17 @@ def new_fit():
 def validate_fit(fit):
     if (fit.get("schema") != SCHEMA or fit.get("model_version") != MODEL_VERSION
             or fit.get("topology_schema") != B.REWARD_TOPOLOGY_SCHEMA):
-        raise ValueError("unsupported T state schema")
+        raise ValueError("unsupported Nanami state schema")
     keys = set()
     for row in fit["records"]:
         key = (int(row["event_id"]), int(row["horizon_hours"]))
         if key in keys or key[1] not in HORIZONS or row["era"] != "voice500_1500":
-            raise ValueError("invalid or duplicate T residual record")
+            raise ValueError("invalid or duplicate Nanami residual record")
         keys.add(key)
         if (len(row["errors"]) != 4 or any(not math.isfinite(float(v)) for v in row["errors"])
                 or int(row["available_at"]) < int(row["end_at"])
                 or int(row["available_at"]) > int(fit["available_at"])):
-            raise ValueError("invalid T residual availability or values")
+            raise ValueError("invalid Nanami residual availability or values")
     return fit
 
 
@@ -220,19 +220,19 @@ def predict_point(panel, control, fit, completed_event_ids, training_cutoff_at):
     groups = groups_for(tasks)
     for key in ("event_id", "issued_at", "start_at", "end_at", "era"):
         if len({t[key] for t in tasks}) != 1:
-            raise ValueError("mixed T panel metadata")
+            raise ValueError("mixed Nanami panel metadata")
     issue, end = int(tasks[0]["issued_at"]), int(tasks[0]["end_at"])
     event_id = int(tasks[0]["event_id"])
     remaining = (end - issue) / HOUR
     if not 0 < remaining <= 72:
-        raise ValueError("T 点预测仅支持活动结束前 72 小时内")
+        raise ValueError("Nanami 点预测仅支持活动结束前 72 小时内")
     if event_id in set(map(int, completed_event_ids)) or max(int(training_cutoff_at), int(fit["available_at"])) > issue:
-        raise ValueError("T state contains target, future, or unavailable training observations")
+        raise ValueError("Nanami state contains target, future, or unavailable training observations")
     clean = []
     for task in tasks:
         history = visible_history(task["history"], issue, int(task.get("input_cutoff_at", issue)))
         if len(history) < 2 or issue - history[-1]["time"] > 3 * HOUR:
-            raise ValueError("T needs four fresh cutoff histories (within 3 hours)")
+            raise ValueError("Nanami needs four fresh cutoff histories (within 3 hours)")
         clean.append(dict(task, history=history, input_cutoff_at=history[-1]["time"]))
     current = [float(t["history"][-1]["ep"]) for t in clean]
     if any(b > a for a, b in zip(current, current[1:])):
@@ -244,7 +244,7 @@ def predict_point(panel, control, fit, completed_event_ids, training_cutoff_at):
     eligible = [r for r in fit["records"] if r["horizon_hours"] == horizon
                 and r["end_at"] <= issue and r["available_at"] <= issue and r["event_id"] != event_id]
     if not eligible:
-        raise ValueError("T 状态尚无该时距的历史校准样本，请使用 Mashiro 或重新导出 T 状态")
+        raise ValueError("Nanami 状态尚无该时距的历史校准样本，请使用 Mashiro 或重新导出 Nanami 状态")
     biases = grouped_bias(eligible, groups)
     scales = [growth_scale(raw[t], current[i]) for i, t in enumerate(TIERS)]
     means = [raw[t] + scales[i] * biases[t] for i, t in enumerate(TIERS)]
