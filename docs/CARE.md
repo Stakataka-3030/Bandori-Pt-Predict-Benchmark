@@ -49,7 +49,7 @@ The calendar is frozen into the benchmark body, its SHA-256 is recorded in the p
 
 ## Server fitting
 
-JP is the architecture-development environment. CN must refit CARE-S on CN history; JP coefficients are not copied into CN. CN reward-era features distinguish the supplied pre-310 T1000 reward boundary from the post-310 T500/T1500 boundaries.
+JP is the architecture-development environment. CN must refit CARE-S on CN history; JP coefficients are not copied into CN. The historical CARE reward features use the explicitly frozen `legacy-reward-geometry-v1` schema. Its post-310 T500/T1500 geometry is not the complete reward topology. The user corrected the full topology on 2026-10-01: the tracked older regime has one T1000 reward boundary; the new regime has separate rewards at T500/T1000/T1500/T2000, with T500/T1500 relatively more attractive. New work can use `reward_feature_dict` / `reward_topology` v2. Existing CARE-S and CARE-S2 explicitly call `legacy_reward_feature_dict` to preserve previously scored forecasts; adopting v2 in a trained CARE model requires a new candidate/version and evaluation. No numerical reward strength or equal value across eras is implied.
 
 ## Current scope
 
