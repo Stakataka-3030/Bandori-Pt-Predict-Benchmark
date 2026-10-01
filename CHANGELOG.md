@@ -1,3 +1,7 @@
+# v0.3.20
+
+- 含 Nanami 校准的种子自动使用独立 `model-nanami` 用户目录，保留旧 `model` 的种子与学习账本。显式 `--state` 仍遵循原路径；旧种子无校准时继续禁用 Nanami。
+
 # Changelog
 
 ## 0.3.16

@@ -23,6 +23,24 @@ HEADING='Nanami（在T1000和T1500上更优的实验性模型）'
 TOOLTIP='七深是实验性模型，可能在T1000和T1500上表现更优'
 
 class NanamiTests(unittest.TestCase):
+    def test_default_nanami_directory_preserves_legacy_learning_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);source=root/'input.json'
+            source.write_text(json.dumps({'events':[event(i) for i in range(1,4)]}))
+            legacy=root/'model'/'tsukushi-state.json';legacy.parent.mkdir()
+            export(source,legacy,False)
+            before=legacy.read_bytes();seed=root/'tsukushi-state.json'
+            export(source,seed,True)
+            with patch.object(app,'home_directory',return_value=root),patch.object(app,'default_seed_path',return_value=seed):
+                selected=app.default_state_path()
+                self.assertEqual(selected,root/'model-nanami'/'tsukushi-state.json')
+                local=app.LocalApp(selected,root/'reports',seed)
+                self.assertIn('topology_t',local.state['fit'])
+                self.assertEqual(legacy.read_bytes(),before)
+                self.assertEqual(app.default_state_path(),selected)
+            export(source,seed,False)
+            with patch.object(app,'home_directory',return_value=root),patch.object(app,'default_seed_path',return_value=seed):
+                self.assertEqual(app.default_state_path(),legacy)
     def test_exact_public_selector_and_tooltip(self):
         class Parser(HTMLParser):
             def handle_starttag(self,tag,attrs):
