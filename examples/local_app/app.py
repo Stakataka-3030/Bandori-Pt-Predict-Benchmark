@@ -25,7 +25,7 @@ if str(MODEL_DIR) not in sys.path:
     sys.path.insert(0, str(MODEL_DIR))
 from build_member_viewer import build as build_viewer  # noqa: E402
 from data_source import active_event_id, live_panel  # noqa: E402
-from engine import predict  # noqa: E402
+from engine import predict, read_state  # noqa: E402
 from bulletins import format_bulletins  # noqa: E402
 from training_state import load_or_create, sync_once  # noqa: E402
 
@@ -93,7 +93,12 @@ def home_directory():
 
 
 def default_state_path():
-    return home_directory() / "model" / "tsukushi-state.json"
+    # Keep the legacy immutable seed and learned state intact on upgrade.
+    seed = default_seed_path()
+    directory = "model"
+    if seed.is_file() and "topology_t" in read_state(seed)["fit"]:
+        directory = "model-nanami"
+    return home_directory() / directory / "tsukushi-state.json"
 
 
 def default_seed_path():
