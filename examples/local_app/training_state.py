@@ -85,6 +85,12 @@ def rebuild(seed, store):
         for group in GROUPS:
             for key, rows in delta.get(group, {}).items():
                 fit[group].setdefault(key, []).extend(copy.deepcopy(rows))
+        if "topology_t" in fit:
+            topology_delta = delta.get("topology_t")
+            if topology_delta is None:
+                raise ValueError("T-enabled seed requires T contributions for every update")
+            fit["topology_t"]["records"].extend(copy.deepcopy(topology_delta["records"]))
+            fit["topology_t"]["available_at"] = max(fit["topology_t"]["available_at"], topology_delta["available_at"])
         fit["early_progress_paths"].extend(
             copy.deepcopy(delta.get("early_progress_paths", [])))
     state = {key: copy.deepcopy(value) for key, value in seed.items()
@@ -194,9 +200,15 @@ def event_delta(state, event):
             samples = _samples(multiplier.completed, tier, horizon)
             if samples:
                 multiplier_samples[f"voice500_1500:{tier}:{horizon}"] = samples
-    return {"tail_pool": tail_pool, "multiplier_samples": multiplier_samples,
+    delta = {"tail_pool": tail_pool, "multiplier_samples": multiplier_samples,
             "kaori_ratios": ratios, "aoi_templates": templates,
             "early_progress_paths": _early_path(event)}
+    if "topology_t" in state["fit"]:
+        from reward_topology_control import collect_residuals, event_available_at
+        delta["topology_t"] = {
+            "records": collect_residuals(LocalKaori(state), event, state["fit"]["topology_t"]["available_at"]),
+            "available_at": event_available_at(event)}
+    return delta
 
 
 def sync_once(state_file: Path, bundled_seed: Path, now_ms: int | None = None):
@@ -236,6 +248,9 @@ def sync_once(state_file: Path, bundled_seed: Path, now_ms: int | None = None):
 def read_state_from_memory(state):
     if state.get("schema") != "tsukushi-local-state-v1" or _digest(state["fit"]) != state["fit_sha256"]:
         raise ValueError("refitted model state failed integrity check")
+    if "topology_t" in state["fit"]:
+        from reward_topology_control import validate_fit
+        validate_fit(state["fit"]["topology_t"])
     if len(state["completed_event_ids"]) != len(set(state["completed_event_ids"])):
         raise ValueError("refitted model state contains duplicate events")
     return state

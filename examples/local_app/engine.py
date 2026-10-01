@@ -84,6 +84,9 @@ def read_state(path: Path):
         raise ValueError("model state hash mismatch")
     if state["model_ids"] != {"control": "tsukushi-kaori", "members": "tsukushi-aoi"}:
         raise ValueError("model identity mismatch")
+    if "topology_t" in fit:
+        from reward_topology_control import validate_fit
+        validate_fit(fit["topology_t"])
     return state
 
 
@@ -221,9 +224,8 @@ def _rui_snapshot(panel, state):
     for at in checkpoints:
         visible_tasks = []
         for task in tasks:
-            points = [p for p in task["history"]
-                      if int(p["time"]) <= at
-                      and int(p.get("available_at", p["time"])) <= at]
+            from reward_topology_control import visible_history
+            points = visible_history(task["history"], at, at)
             if not points:
                 break
             visible_tasks.append(dict(task, history=points, issued_at=at,
@@ -286,15 +288,50 @@ def _rui_snapshot(panel, state):
 
 
 def predict(panel, state, mode="mashiro"):
-    if mode not in ("mashiro", "rui"):
+    if mode not in ("mashiro", "rui", "topology"):
         raise ValueError("unknown forecast mode")
+    if not panel.get("tasks"):
+        raise ValueError("empty forecast panel")
+    safe_tasks = []
+    for task in panel["tasks"]:
+        issue = int(task["issued_at"])
+        cutoff = min(issue, int(task.get("input_cutoff_at", issue)))
+        visible = sorted((p for p in task["history"]
+                          if int(p["time"]) <= cutoff
+                          and int(p.get("available_at", p["time"])) <= issue),
+                         key=lambda p: (int(p["time"]), int(p.get("available_at", p["time"]))))
+        revisions = {}
+        for point in visible:
+            key = (int(point["time"]), int(point.get("available_at", point["time"])))
+            if key in revisions and revisions[key] != float(point["ep"]):
+                raise ValueError("conflicting tracker values at the same availability time")
+            revisions[key] = float(point["ep"])
+        if not visible:
+            raise ValueError("no causally visible tracker observations")
+        safe_tasks.append(dict(task, history=visible, input_cutoff_at=visible[-1]["time"]))
+    panel = dict(panel, tasks=safe_tasks)
     remaining = (int(panel["tasks"][0]["end_at"])
                  - int(panel["tasks"][0]["issued_at"])) / HOUR
     if remaining <= 0:
         raise ValueError("活动已经结束")
     if any(int(t["tier"]) not in TIERS for t in panel["tasks"]):
         raise ValueError("unsupported tier")
-    if mode == "rui":
+    if mode == "topology":
+        if "topology_t" not in state["fit"]:
+            raise ValueError("该状态不含 T 校准，请用 --with-topology 导出，并用 --seed 与新的独立 --state 目录启动")
+        from reward_topology_control import predict_point
+        values, diagnostics = predict_point(panel, LocalKaori(state), state["fit"]["topology_t"],
+                                             state["completed_event_ids"], state["training_cutoff_at"])
+        issue, end = int(panel["tasks"][0]["issued_at"]), int(panel["tasks"][0]["end_at"])
+        current = {int(t["tier"]): float(t["history"][-1]["ep"]) for t in panel["tasks"]}
+        snapshot = {"event_id": panel["event_id"], "issued_at": issue, "end_at": end,
+                    "horizon_hours": remaining, "current": current, "control": values,
+                    "control_paths": {str(t): [[issue, current[t]], [end, values[t]]] for t in TIERS},
+                    "members": [], "member_p10": {}, "member_median": {}, "member_p90": {},
+                    "forecast_mode": "topology_point", "topology_diagnostics": diagnostics,
+                    "path_interpretation": "straight display connector, not a fitted trajectory",
+                    "uncertainty": "point_forecast_only"}
+    elif mode == "rui":
         snapshot = _rui_snapshot(panel, state)
     elif remaining > 72:
         snapshot = _early_snapshot(panel, state)
@@ -316,7 +353,7 @@ def predict(panel, state, mode="mashiro"):
                           if int(p["time"]) <= int(t["issued_at"])
                           and int(p.get("available_at", p["time"])) <= int(t["issued_at"])]
         for t in panel["tasks"]}
-    snapshot["logic_mode"] = "Rui" if mode == "rui" else "Mashiro"
+    snapshot["logic_mode"] = {"rui": "Rui", "mashiro": "Mashiro", "topology": "Topology T"}[mode]
     snapshot["linear1h"] = {}
     snapshot["linear1h_paths"] = {}
     snapshot["linear1h_details"] = {}
@@ -331,4 +368,8 @@ def predict(panel, state, mode="mashiro"):
                 snapshot["linear1h_paths"][tier] = projection["path"]
                 snapshot["linear1h_details"][tier] = {
                     key: projection[key] for key in ("growth_per_hour", "basis_from", "basis_to")}
+    if mode == "topology":
+        # T already jointly reconciles all four point forecasts. Do not apply the
+        # legacy privileged-anchor clamp or manufacture member quantiles.
+        return snapshot
     return constrain_snapshot(snapshot)
