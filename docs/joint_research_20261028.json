@@ -1,0 +1,250 @@
+{
+  "model_version": "joint-rui-20261028-locked-v1",
+  "baseline_version": "0.3.20",
+  "origins": [
+    "start+3h",
+    "start+24h",
+    "start+48h",
+    "end-72h",
+    "end-24h",
+    "end-6h"
+  ],
+  "development_events": [
+    315,
+    317,
+    318,
+    319,
+    320,
+    321
+  ],
+  "selection_events": [
+    322,
+    323,
+    324,
+    325
+  ],
+  "validation_events": [
+    326
+  ],
+  "interpretation": "Retrospective research; cohorts were discussed before, not a new blind benchmark. Event-balanced raw MAE on identical cases; unavailable cases retained.",
+  "decision": "do_not_promote_default",
+  "reason": "T1500 validation regressed despite improvement in all-tier MAE. No 30 percent stable-error-reduction claim.",
+  "sources": {
+    "candidate_rui.py": "cc31f8300d6cae3d793bea05e9f78452c339a6955705c72ee1737046298eefda",
+    "dev_harness.py": "d91a95ac6ea2933dded39954e7e4f46a462f6aaa64b7a37b378a342dfc3ffae1",
+    "joint_tiers.py": "04f3501fc55ae9847eed911c66d5b1db7864c4e3216a7ee71c6741e703669aae"
+  },
+  "port_equivalence": {
+    "cases": 224,
+    "max_abs_delta": 4.656612873077393e-10,
+    "failures": []
+  },
+  "selection": {
+    "mashiro": {
+      "all": {
+        "events": 4,
+        "cases": 92,
+        "missing": 4,
+        "baseline_mae": 814263.2928501299,
+        "candidate_mae": 819148.1420552917,
+        "reduction": -0.005999102806247825
+      },
+      "pair": {
+        "events": 4,
+        "cases": 46,
+        "missing": 2,
+        "baseline_mae": 756753.1152170957,
+        "candidate_mae": 766522.8136274193,
+        "reduction": -0.012910020737107786
+      },
+      "1000": {
+        "events": 4,
+        "cases": 23,
+        "missing": 1,
+        "baseline_mae": 745692.0159944412,
+        "candidate_mae": 745692.0159944397,
+        "reduction": 1.9984014443252818e-15
+      },
+      "1500": {
+        "events": 4,
+        "cases": 23,
+        "missing": 1,
+        "baseline_mae": 767814.2144397502,
+        "candidate_mae": 787353.6112603988,
+        "reduction": -0.025448079044623872
+      }
+    },
+    "rui": {
+      "all": {
+        "events": 4,
+        "cases": 92,
+        "missing": 4,
+        "baseline_mae": 724571.0231568745,
+        "candidate_mae": 696954.1104839932,
+        "reduction": 0.03811484559865164
+      },
+      "pair": {
+        "events": 4,
+        "cases": 46,
+        "missing": 2,
+        "baseline_mae": 690105.6721747194,
+        "candidate_mae": 610267.0940505147,
+        "reduction": 0.1156903664805573
+      },
+      "1000": {
+        "events": 4,
+        "cases": 23,
+        "missing": 1,
+        "baseline_mae": 738418.9661275574,
+        "candidate_mae": 645226.0607600037,
+        "reduction": 0.12620600179905883
+      },
+      "1500": {
+        "events": 4,
+        "cases": 23,
+        "missing": 1,
+        "baseline_mae": 641792.3782218813,
+        "candidate_mae": 575308.1273410257,
+        "reduction": 0.1035915245130421
+      }
+    },
+    "both": {
+      "all": {
+        "events": 4,
+        "cases": 184,
+        "missing": 8,
+        "baseline_mae": 769417.1580035022,
+        "candidate_mae": 758051.1262696424,
+        "reduction": 0.014772261855132807
+      },
+      "pair": {
+        "events": 4,
+        "cases": 92,
+        "missing": 4,
+        "baseline_mae": 723429.3936959076,
+        "candidate_mae": 688394.953838967,
+        "reduction": 0.04842827809076722
+      },
+      "1000": {
+        "events": 4,
+        "cases": 46,
+        "missing": 2,
+        "baseline_mae": 742055.4910609993,
+        "candidate_mae": 695459.0383772218,
+        "reduction": 0.06279375767053941
+      },
+      "1500": {
+        "events": 4,
+        "cases": 46,
+        "missing": 2,
+        "baseline_mae": 704803.2963308158,
+        "candidate_mae": 681330.8693007122,
+        "reduction": 0.033303514827896286
+      }
+    }
+  },
+  "validation": {
+    "mashiro": {
+      "all": {
+        "events": 1,
+        "cases": 20,
+        "missing": 4,
+        "baseline_mae": 104918.37673570217,
+        "candidate_mae": 85240.8692228514,
+        "reduction": 0.18755062864172978
+      },
+      "pair": {
+        "events": 1,
+        "cases": 10,
+        "missing": 2,
+        "baseline_mae": 107863.30878969294,
+        "candidate_mae": 68508.2937639914,
+        "reduction": 0.3648600758431598
+      },
+      "1000": {
+        "events": 1,
+        "cases": 5,
+        "missing": 1,
+        "baseline_mae": 33703.450357814276,
+        "candidate_mae": 33703.450357814276,
+        "reduction": 0.0
+      },
+      "1500": {
+        "events": 1,
+        "cases": 5,
+        "missing": 1,
+        "baseline_mae": 182023.1672215716,
+        "candidate_mae": 103313.13717016853,
+        "reduction": 0.4324176490984337
+      }
+    },
+    "rui": {
+      "all": {
+        "events": 1,
+        "cases": 20,
+        "missing": 4,
+        "baseline_mae": 161129.7138152307,
+        "candidate_mae": 142825.83653053426,
+        "reduction": 0.11359715629909029
+      },
+      "pair": {
+        "events": 1,
+        "cases": 10,
+        "missing": 2,
+        "baseline_mae": 120879.97110501569,
+        "candidate_mae": 191718.69850173866,
+        "reduction": -0.586025350181306
+      },
+      "1000": {
+        "events": 1,
+        "cases": 5,
+        "missing": 1,
+        "baseline_mae": 155986.60424910564,
+        "candidate_mae": 99108.784060867,
+        "reduction": 0.3646327225471655
+      },
+      "1500": {
+        "events": 1,
+        "cases": 5,
+        "missing": 1,
+        "baseline_mae": 85773.33796092574,
+        "candidate_mae": 284328.61294261034,
+        "reduction": -2.3148833856989097
+      }
+    },
+    "both": {
+      "all": {
+        "events": 1,
+        "cases": 40,
+        "missing": 8,
+        "baseline_mae": 133024.04527546643,
+        "candidate_mae": 114033.35287669284,
+        "reduction": 0.14276135084786845
+      },
+      "pair": {
+        "events": 1,
+        "cases": 20,
+        "missing": 4,
+        "baseline_mae": 114371.63994735431,
+        "candidate_mae": 130113.49613286504,
+        "reduction": -0.13763775873771467
+      },
+      "1000": {
+        "events": 1,
+        "cases": 10,
+        "missing": 2,
+        "baseline_mae": 94845.02730345997,
+        "candidate_mae": 66406.11720934063,
+        "reduction": 0.29984608474124896
+      },
+      "1500": {
+        "events": 1,
+        "cases": 10,
+        "missing": 2,
+        "baseline_mae": 133898.25259124866,
+        "candidate_mae": 193820.87505638943,
+        "reduction": -0.4475235584146615
+      }
+    }
+  }
+}

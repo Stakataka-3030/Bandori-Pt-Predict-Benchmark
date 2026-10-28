@@ -1,3 +1,9 @@
+## 0.3.21
+
+- Add a standard-library offline joint-tier research tool with completed-event ratio priors and tempered family-level Rui inference. Keep app defaults and the baseline registry unchanged.
+- Preserve the failed T1500 validation alongside selection gains; do not promote the candidate or claim a stable 30% error reduction.
+- Add causal/availability and point-only output tests; keep existing frozen forecasts and installed 0.3.20 state intact.
+
 # v0.3.20
 
 - 含 Nanami 校准的种子自动使用独立 `model-nanami` 用户目录，保留旧 `model` 的种子与学习账本。显式 `--state` 仍遵循原路径；旧种子无校准时继续禁用 Nanami。
