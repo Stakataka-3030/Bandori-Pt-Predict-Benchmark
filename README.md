@@ -1,6 +1,8 @@
 # Bandori PT Predict Benchmark
 
-**v0.3.20 · 第三模式命名为 Nanami，并加入数值／可读报文，保持预测和状态兼容。**
+**v0.3.21 · 增加离线联合档位研究工具与验证报告；默认预测逻辑沿用 v0.3.20。**
+
+T1000/T1500 重合的原因、候选实现及未通过 T1500 验证的反例见 [联合预测研究](docs/JOINT_RESEARCH.md)。该工具只输出研究点预测，暂不替换应用默认模式。
 
 项目自有源码采用 [MPL 2.0](LICENSE)，版权与素材边界见 [LICENSE_SCOPE.md](LICENSE_SCOPE.md)。
 
